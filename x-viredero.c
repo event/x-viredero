@@ -1,6 +1,6 @@
 /*
  * X11 window sequence collector for viredero
- * Copyright (c) 2015 Leonid Movshovich
+ * Copyright (c) 2015 Leonid Movshovich <event.riga@gmail.com>
  *
  *
  * viredero is free software; you can redistribute it and/or
