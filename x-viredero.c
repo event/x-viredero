@@ -24,7 +24,7 @@
 #include <X11/Xlibint.h>
 #include <X11/extensions/Xdamage.h>
 
-#define PROG "xcoll"
+#define PROG "x-viredero"
 #define SLEEP_TIME_MSEC 50
 
 struct context {
