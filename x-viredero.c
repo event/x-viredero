@@ -11,7 +11,7 @@
  * viredero is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
+ * General Public License for more details.
  *
  * You should have received a copy of the GNU General Public
  * License along with viredero; if not, write to the Free Software
@@ -28,7 +28,7 @@
 #define SLEEP_TIME_MSEC 50
 
 struct context {
-    Display* dpy;
+    Display* display;
     Window root;
     int damage;
     int (*write)(struct context*, int, int, int, int, char*, int);
@@ -139,25 +139,25 @@ static void usage() {
 }
 
 struct bmp_context bmp_ctx;
-static int setup_dpy(const char * display_name, struct context* ctx) {
-    Display * dpy = XOpenDisplay(display_name);
-    if (!dpy) {
+static int setup_display(const char * display_name, struct context* ctx) {
+    Display * display = XOpenDisplay(display_name);
+    if (!display) {
         fprintf(stderr, "%s:  unable to open display '%s'\n"
                 , PROG, XDisplayName (display_name));
         usage();
         return 0;
     }
 
-    Window root = DefaultRootWindow(dpy);
+    Window root = DefaultRootWindow(display);
 
     int damage_error;
-    if (!XDamageQueryExtension (dpy, &ctx->damage, &damage_error)) {
+    if (!XDamageQueryExtension (display, &ctx->damage, &damage_error)) {
         fprintf(stderr, "%s: Backend does not have damage extension\n", PROG);
         return 0;
     }
-    XDamageCreate (dpy, root, XDamageReportRawRectangles);
+    XDamageCreate (display, root, XDamageReportRawRectangles);
     XWindowAttributes attrib;
-    XGetWindowAttributes(dpy, root, &attrib);
+    XGetWindowAttributes(display, root, &attrib);
     if (0 == attrib.width || 0 == attrib.height)
     {
         fprintf(stderr, "%s: Bad root with %d x %d\n"
@@ -165,7 +165,7 @@ static int setup_dpy(const char * display_name, struct context* ctx) {
         return 0;
     }
 
-    ctx->dpy = dpy;
+    ctx->display = display;
     ctx->root = root;
 
     ctx->write = bmp_writer;
@@ -177,7 +177,7 @@ static int setup_dpy(const char * display_name, struct context* ctx) {
 int output_damage(struct context* ctx, int x, int y, int width, int height) {
 
 //    fprintf(stderr, "outputing damage: %d %d %d %d\n", x, y, width, height);
-    XImage *image = XGetImage(ctx->dpy, ctx->root
+    XImage *image = XGetImage(ctx->display, ctx->root
 			      , x, y, width, height, AllPlanes, ZPixmap);
     if (!image) {
 	printf("unabled to get the image\n");
@@ -191,16 +191,43 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
 static struct context context;
 
 int main(int argc, char* argv[]) {
-    char* disp_name = argv[1];
+    char* disp_name;
     int fin = 0;
+    uint16_t port;
     XEvent event;
-    
-    setup_dpy(disp_name, &context);
+    int c;
+    while ((c = getopt (argc, argv, "d:p:")) != -1)
+        switch (c)
+        {
+        case 'd':
+            int len = strlen(optarg);
+            if (len > DISP_NAME_MAXLEN) {
+                fprintf(stderr, "Display name %s is longer then %d"
+                        ". We can't handle it. Good bye.\n"
+                        , optarg, DISP_NAME_MAXLEN);
+                exit(1);
+            }
+            disp_name = malloc(len + 1);
+            strncpy(disp_name, optarg, len);
+            break;
+        case 'p':
+            long int _port = strtol(optarg, NULL, 10);
+            if (_port < 1 || port > 65535) {
+                fprintf(stderr, "Port %s is not in range. RTFM on TCP ports. Good bye.\n");
+                exit(1);
+            }
+            port = (uint16_t)_port;
+            break;
+        default:
+            usage();
+        }
+    }
+    setup_display(disp_name, &context);
     while (! fin) {
-        if (XPending(context.dpy) > 0) {
-            XGrabServer(context.dpy);
-            while (XPending(context.dpy) > 0) {
-                XNextEvent(context.dpy, &event);
+        if (XPending(context.display) > 0) {
+            XGrabServer(context.display);
+            while (XPending(context.display) > 0) {
+                XNextEvent(context.display, &event);
                 if (event.type == context.damage + XDamageNotify) {
                     XDamageNotifyEvent *de = (XDamageNotifyEvent *) &event;
                     if (de->drawable == context.root) {
@@ -210,7 +237,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-	    XUngrabServer(context.dpy);
+	    XUngrabServer(context.display);
 	    usleep(SLEEP_TIME_MSEC);
         }
     }
