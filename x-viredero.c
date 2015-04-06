@@ -21,16 +21,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <syslog.h>
+#include <netinet/in.h>
 #include <X11/Xlibint.h>
 #include <X11/extensions/Xdamage.h>
 
 #define PROG "x-viredero"
 #define SLEEP_TIME_MSEC 50
+#define DISP_NAME_MAXLEN 64
+
+static int max_log_level = 8;
 
 struct context {
     Display* display;
     Window root;
     int damage;
+    int sock_fd;
     int (*write)(struct context*, int, int, int, int, char*, int);
     void* writer_private;
 };
@@ -53,6 +61,20 @@ static int stdout_writer(struct context* ctx, int x, int y, int width, int heigh
     t = htonl(height);
     write(fd, &t, 4);
     write(fd, data, size);
+}
+
+static int sock_writer(int fd, int x, int y, int width, int height
+		, char* data, int size) {
+    int t;
+    t = htonl(width);
+    send(fd, &t, 4, 0);
+    t = htonl(height);
+    send(fd, &t, 4, 0);
+    t = htonl(x);
+    send(fd, &t, 4, 0);
+    t = htonl(y);
+    send(fd, &t, 4, 0);
+    send(fd, data, size, 0);
 }
 
 static int bmp_writer_init(struct context* ctx, struct bmp_context* bmp_ctx) {
@@ -168,9 +190,9 @@ static int setup_display(const char * display_name, struct context* ctx) {
     ctx->display = display;
     ctx->root = root;
 
-    ctx->write = bmp_writer;
-    ctx->writer_private = (void*)(&bmp_ctx);
-    bmp_writer_init(ctx, &bmp_ctx);
+    /* ctx->write = bmp_writer; */
+    /* ctx->writer_private = (void*)(&bmp_ctx); */
+    /* bmp_writer_init(ctx, &bmp_ctx); */
     return 1;
 }
 
@@ -183,9 +205,47 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
 	printf("unabled to get the image\n");
 	return 0;
     }
-    x = htonl(x);
-    ctx->write(ctx, x, y, width, height, image->data
-	       , width * height * image->bits_per_pixel / 8);
+    sock_writer(ctx->sock_fd, x, y, width, height, image->data
+                , width * height * image->bits_per_pixel / 8);
+}
+
+static void slog(int prio, char* format, ...) {
+    if (prio > max_log_level) {
+        return;
+    }
+    va_list ap;
+    va_start(ap, format);
+    vsyslog(prio, format, ap);
+    va_end(ap);
+}
+
+static void daemonize() {
+    if (daemon(0, 0)) {
+        slog(LOG_ERR, "Failed to daemonize: %m");
+        exit(1);
+    }
+//TODO: signal handler assignement natrally goes here
+}
+
+static int get_listen_socket(uint16_t port){
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        slog(LOG_ERR, "Socket creation failed: %m");
+        exit(1);
+    }
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(struct sockaddr_in)) < 0) {
+        slog(LOG_ERR, "Socket bind failed: %m");
+        exit(1);
+    }
+    if (listen(sock, 8) < 0) {
+        slog(LOG_ERR, "Socket listen failed: %m");
+        exit(1);
+    }
+    return sock;
 }
 
 static struct context context;
@@ -196,11 +256,18 @@ int main(int argc, char* argv[]) {
     uint16_t port;
     XEvent event;
     int c;
-    while ((c = getopt (argc, argv, "d:p:")) != -1)
+    int debug = 0;
+    int ssock;
+    int len;
+    long int _port;
+    while ((c = getopt (argc, argv, "hdD:p:")) != -1) {
         switch (c)
         {
         case 'd':
-            int len = strlen(optarg);
+            debug = 1;
+            break;
+        case 'D':
+            len = strlen(optarg);
             if (len > DISP_NAME_MAXLEN) {
                 fprintf(stderr, "Display name %s is longer then %d"
                         ". We can't handle it. Good bye.\n"
@@ -211,17 +278,28 @@ int main(int argc, char* argv[]) {
             strncpy(disp_name, optarg, len);
             break;
         case 'p':
-            long int _port = strtol(optarg, NULL, 10);
+            _port = strtol(optarg, NULL, 10);
             if (_port < 1 || port > 65535) {
-                fprintf(stderr, "Port %s is not in range. RTFM on TCP ports. Good bye.\n");
+                fprintf(stderr, "Port %s is not in range. RTFM on TCP ports. Good bye.\n", optarg);
                 exit(1);
             }
             port = (uint16_t)_port;
             break;
-        default:
+        case 'h':
             usage();
+            break;
         }
     }
+    if (debug) {
+        openlog(PROG, LOG_PERROR | LOG_CONS, LOG_DAEMON);
+    } else {
+        openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
+        daemonize();
+    }
+    slog(LOG_DEBUG, "Waiting for incoming connection");
+    ssock = get_listen_socket(port);
+    int xfer_sock = accept(ssock, NULL, NULL);
+    context.sock_fd = xfer_sock;
     setup_display(disp_name, &context);
     while (! fin) {
         if (XPending(context.display) > 0) {
