@@ -66,6 +66,8 @@ static int stdout_writer(struct context* ctx, int x, int y, int width, int heigh
 static int sock_writer(int fd, int x, int y, int width, int height
 		, char* data, int size) {
     int t;
+    char cmd = 2;
+    send(fd, &cmd, 1, 0);
     t = htonl(width);
     send(fd, &t, 4, 0);
     t = htonl(height);
@@ -165,7 +167,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
     Display * display = XOpenDisplay(display_name);
     if (!display) {
         fprintf(stderr, "%s:  unable to open display '%s'\n"
-                , PROG, XDisplayName (display_name));
+                , PROG, display_name);
         usage();
         return 0;
     }
@@ -205,6 +207,9 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
 	printf("unabled to get the image\n");
 	return 0;
     }
+    fprintf(stderr, "!w/h/bpp/fmt/dep/bpl  %d/%d/%d/%d/%d/%d\n"
+            , image->width, image->height, image->bits_per_pixel
+            , image->format, image->depth, image->bytes_per_line);
     sock_writer(ctx->sock_fd, x, y, width, height, image->data
                 , width * height * image->bits_per_pixel / 8);
 }
