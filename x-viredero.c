@@ -65,18 +65,26 @@ static int stdout_writer(struct context* ctx, int x, int y, int width, int heigh
 
 static int sock_writer(int fd, int x, int y, int width, int height
 		, char* data, int size) {
-    int t;
+    int t, sent;
     char cmd = 2;
-    send(fd, &cmd, 1, 0);
+    /* fprintf(stderr, "%d/%d/%d/%d\n" */
+    /*         , width, height, x, y); */
+    sent = send(fd, &cmd, 1, 0);
+//    fprintf(stderr, "sent %d", sent);
     t = htonl(width);
-    send(fd, &t, 4, 0);
+    sent = send(fd, &t, 4, 0);
+//    fprintf(stderr, "/%d", sent);
     t = htonl(height);
-    send(fd, &t, 4, 0);
+    sent = send(fd, &t, 4, 0);
+//    fprintf(stderr, "/%d", sent);
     t = htonl(x);
-    send(fd, &t, 4, 0);
+    sent = send(fd, &t, 4, 0);
+//    fprintf(stderr, "/%d", sent);
     t = htonl(y);
-    send(fd, &t, 4, 0);
-    send(fd, data, size, 0);
+    sent = send(fd, &t, 4, 0);
+//    fprintf(stderr, "/%d", sent);
+    sent = send(fd, data, size, 0);
+//    fprintf(stderr, "/%d\n", sent);
 }
 
 static int bmp_writer_init(struct context* ctx, struct bmp_context* bmp_ctx) {
@@ -207,9 +215,6 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
 	printf("unabled to get the image\n");
 	return 0;
     }
-    fprintf(stderr, "!w/h/bpp/fmt/dep/bpl  %d/%d/%d/%d/%d/%d\n"
-            , image->width, image->height, image->bits_per_pixel
-            , image->format, image->depth, image->bytes_per_line);
     sock_writer(ctx->sock_fd, x, y, width, height, image->data
                 , width * height * image->bits_per_pixel / 8);
 }
