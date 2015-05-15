@@ -1,5 +1,5 @@
 /*
- * X11 window sequence collector for viredero
+ * X11 state change collector for viredero
  * Copyright (c) 2015 Leonid Movshovich <event.riga@gmail.com>
  *
  *
@@ -25,95 +25,65 @@
 #include <unistd.h>
 #include <syslog.h>
 #include <netinet/in.h>
+
 #include <X11/Xlibint.h>
 #include <X11/extensions/Xdamage.h>
+
+#include "x-viredero.h"
 
 #define PROG "x-viredero"
 #define SLEEP_TIME_MSEC 50
 #define DISP_NAME_MAXLEN 64
 
+#if WITH_USB
+
+#define USB_MANUFACTURER "Leonid Movshovich"
+#define USB_MODEL "x-viredero"
+#define USB_DESCRIPTION "viredero is a virtual reality desktop view"
+#define USB_VERSION "2.1"
+#define USB_URI "http://play.google.com/"
+#define USB_SERIAL_NUM "12344321"
+
+#endif
+
+#define BMP_FNAME_BUF_SIZE 128
+
 static int max_log_level = 8;
 
-struct context {
-    Display* display;
-    Window root;
-    int damage;
-    int sock_fd;
-    int (*write)(struct context*, int, int, int, int, char*, int);
-    void* writer_private;
-};
-
-struct bmp_context {
-    int num;
-    char* path;
-    char* fname;
-};
-    
-static int stdout_writer(struct context* ctx, int x, int y, int width, int height
-		, char* data, int size) {
-    int fd = (int)((long long)ctx->writer_private);
-    int t = htonl(x);
-    write(fd, &t, 4);
-    t = htonl(y);
-    write(fd, &t, 4);
-    t = htonl(width);
-    write(fd, &t, 4);
-    t = htonl(height);
-    write(fd, &t, 4);
-    write(fd, data, size);
+static void slog(int prio, char* format, ...) {
+    if (prio > max_log_level) {
+        return;
+    }
+    va_list ap;
+    va_start(ap, format);
+    vsyslog(prio, format, ap);
+    va_end(ap);
 }
 
-static int sock_writer(int fd, int x, int y, int width, int height
+static int sock_writer(struct context* ctx, int x, int y, int width, int height
 		, char* data, int size) {
+    int fd = ctx->w.sctx.sock;
+    if (0 == fd) {
+        fd = accept(ctx->w.sctx.listen_sock, NULL, NULL);
+        if (fd < 0) {
+            slog(LOG_ERR, "Failed to accept connection: %m");
+            exit(1);
+        }
+        ctx->w.sctx.sock = fd;
+    }
     int t, sent;
     char cmd = 2;
-    /* fprintf(stderr, "%d/%d/%d/%d\n" */
-    /*         , width, height, x, y); */
     sent = send(fd, &cmd, 1, 0);
-//    fprintf(stderr, "sent %d", sent);
     t = htonl(width);
     sent = send(fd, &t, 4, 0);
-//    fprintf(stderr, "/%d", sent);
     t = htonl(height);
     sent = send(fd, &t, 4, 0);
-//    fprintf(stderr, "/%d", sent);
     t = htonl(x);
     sent = send(fd, &t, 4, 0);
-//    fprintf(stderr, "/%d", sent);
     t = htonl(y);
     sent = send(fd, &t, 4, 0);
-//    fprintf(stderr, "/%d", sent);
     sent = send(fd, data, size, 0);
-//    fprintf(stderr, "/%d\n", sent);
 }
-
-static int bmp_writer_init(struct context* ctx, struct bmp_context* bmp_ctx) {
-    bmp_ctx->path = "/tmp/imgs/w%0.6d.bmp";
-    bmp_ctx->num = 0;
-    bmp_ctx->fname = malloc(64);
-}
-    
-struct __attribute__ ((__packed__)) bm_head {
-    uint16_t bfType;
-    uint32_t bfSize;
-    uint16_t bfReserved1;
-    uint16_t bfReserved2;
-    uint32_t bfOffBits;
-};
-
-struct __attribute__ ((__packed__)) bm_info_head {
-    uint32_t biSize;
-    uint32_t biWidth;
-    uint32_t biHeight;
-    uint16_t biPlanes;
-    uint16_t biBitCount;
-    uint32_t biCompression;
-    uint32_t biSizeImage;
-    uint32_t biXPelsPerMeter;
-    uint32_t biYPelsPerMeter;
-    uint32_t biClrUsed;
-    uint32_t biClrImportant;
-};
 
 static void swap_lines(char* line0, char* line1, int size) {
     int i;
@@ -126,36 +96,21 @@ static void swap_lines(char* line0, char* line1, int size) {
 
 static int bmp_writer(struct context* ctx, int x, int y, int width, int height
 	       , char* data, int size) {
-    struct bmp_context* bmp_ctx = (struct bmp_context*)ctx->writer_private;
-    struct bm_head head;
-    struct bm_info_head ihead; 
+    struct bmp_context* bctx = &ctx->w.bctx;
     FILE *f;
    
-    head.bfType = 0x4D42;
     head.bfSize = sizeof(struct bm_head) + sizeof(struct bm_info_head)
 	+ width * height * 4;
-    head.bfOffBits = sizeof(struct bm_head) + sizeof(struct bm_info_head);
-    head.bfReserved1 = 0;
-    head.bfReserved2 = 0;
-    
-    ihead.biSize = sizeof(struct bm_info_head);
-    ihead.biWidth = width;
-    ihead.biHeight = height;
-    ihead.biPlanes = 1;
-    ihead.biBitCount = 32;
-    ihead.biSizeImage = width * height * 4;
-    ihead.biCompression = 0;
-    ihead.biXPelsPerMeter = 0;
-    ihead.biYPelsPerMeter = 0;
-    ihead.biClrUsed = 0;
-    ihead.biClrImportant = 0;
+    bctx->ihead.biWidth = width;
+    bctx->ihead.biHeight = height;
+    bctx->ihead.biSizeImage = width * height * 4;
 
-    sprintf(bmp_ctx->fname, bmp_ctx->path, bmp_ctx->num);
-    f = fopen(bmp_ctx->fname, "wb");
+    snprintf(bctx->fname, BMP_FNAME_BUF_SIZE, bctx->path, bctx->num);
+    f = fopen(bctx->fname, "wb");
     if(f == NULL)
 	return;
-    fwrite(&head, sizeof(struct bm_head), 1, f);
-    fwrite(&ihead, sizeof(struct bm_info_head), 1, f);
+    fwrite(&bctx->head, sizeof(struct bm_head), 1, f);
+    fwrite(&ihead->head, sizeof(struct bm_info_head), 1, f);
     int i;
     int byte_w = 4 * width;
     for (i = 0; i < height/2; i += 1) {
@@ -163,14 +118,137 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
     }
     fwrite(data, 4*width*height, 1, f);
     fclose(f);
-    bmp_ctx->num += 1;
+    bctx->num += 1;
 }
 
-static void usage() {
-    printf("USAGE: %s <display> (e.g. '%s :0')", PROG, PROG);
+int output_damage(struct context* ctx, int x, int y, int width, int height) {
+    slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
+    XImage *image = XGetImage(ctx->display, ctx->root
+			      , x, y, width, height, AllPlanes, ZPixmap);
+    if (!image) {
+	printf("unabled to get the image\n");
+	return 0;
+    }
+    ctx->write(ctx, x, y, width, height, image->data
+               , width * height * image->bits_per_pixel / 8);
 }
 
-struct bmp_context bmp_ctx;
+#if WITH_USB
+
+static int xfer_or_die(libusb_handle* hndl, int wIdx, char* str) {
+    int res = libusb_control_transfer(hndl, 0x40, 52, 0, wIdx
+                                      , str, strlen(str), 0);
+    if (res < 0) {
+        slog(LOG_DEBUG, "USB: xfer failed: %s", libusb_strerror(res));
+        libusb_close(hndl);
+        return 0;
+    }
+    return 1;
+}
+
+static int try_setup_accessory(libusb_device* dev) {
+    libusb_handle* hndl;
+    unsigned char buf[2];
+    int res;
+    res = libusb_open(dev, &hndl);
+    if (res < 0) {
+        slog(LOG_DEBUG, "USB: failed to open : %s", libusb_strerror(res));
+        return 0;
+    }
+    res = libusb_claim_interface(hndl, 0);
+    if (res < 0) {
+        slog(LOG_DEBUG, "USB: failed to claim interface : %s", libusb_strerror(res));
+        libusb_close(hndl);
+        return 0;
+    }
+    res = libusb_control_transfer(
+        hndl, 0xC0 //bmRequestType
+        , 51 //bRequest
+        , 0, 0 //wValue, wIndex
+        , buf //data
+        , 2 //wLength
+        , 0); //timeout
+    if (res < 0) {
+        slog(LOG_DEBUG, "USB: xfer failed: %s", libusb_strerror(res));
+        libusb_close(hndl);
+        return 0;
+    }
+    slog(LOG_DEBUG, "USB Device version code: %d", buf[1] << 8 | buf[0]);
+    
+    if (! (xfer_or_die(hndl, 0, USB_MANUFACTURER)
+            && xfer_or_die(hndl, 1, USB_MODEL)
+            && xfer_or_die(hndl, 2, USB_DESCRIPTION)
+            && xfer_or_die(hndl, 3, USB_VERSION)
+            && xfer_or_die(hndl, 4, USB_URI)
+            && xfer_or_die(hndl, 5, USB_SERIAL_NUM)))
+    {
+        return 0;
+    }
+    response = libusb_control_transfer(hndl,0x40,53,0,0,NULL,0,0);
+    libusb_release_interface(hndl, 0);
+}
+
+static char init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
+    libusb_device** devs;
+    libusb_device* tgt = NULL;
+    int cnt;
+    libusb_set_debug(NULL, 3);
+    cnt = libusb_get_device_list9);
+    if (cnt < 0) {
+        slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
+        exit(1);
+    }
+    while (cnt > 0 && NULL == tgt) {
+        cnt -= 1;
+        libusb_open(&dev[cnt], &hndl);
+        
+        if ()
+            
+    }
+}
+#endif
+
+static void init_bmp_folder(struct bmp_context* bctx, char* path) {
+    bctx->num = 0;
+    bctx->path = strcpy(path);
+    bctx->fname = malloc(BMP_FNAME_BUF_SIZE);
+    bctx->head.bfType = 0x4D42;
+    bctx->head.bfOffBits = sizeof(struct bm_head) + sizeof(struct bm_info_head);
+    bctx->head.bfReserved1 = 0;
+    bctx->head.bfReserved2 = 0;
+    
+    bctx->ihead.biSize = sizeof(struct bm_info_head);
+    bctx->ihead.biPlanes = 1;
+    bctx->ihead.biBitCount = 32;
+    bctx->ihead.biCompression = 0;
+    bctx->ihead.biXPelsPerMeter = 0;
+    bctx->ihead.biYPelsPerMeter = 0;
+    bctx->ihead.biClrUsed = 0;
+    bctx->ihead.biClrImportant = 0;
+}
+
+static void init_socket(struct sock_context* sctx, uint16_t port) {
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        slog(LOG_ERR, "Socket creation failed: %m");
+        exit(1);
+    }
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(struct sockaddr_in)) < 0) {
+        slog(LOG_ERR, "Socket bind failed: %m");
+        exit(1);
+    }
+    if (listen(sock, 8) < 0) {
+        slog(LOG_ERR, "Socket listen failed: %m");
+        exit(1);
+    }
+    sctx->listen_sock = sock;
+    sctx->sock = 0;
+}
+
 static int setup_display(const char * display_name, struct context* ctx) {
     Display * display = XOpenDisplay(display_name);
     if (!display) {
@@ -199,34 +277,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
 
     ctx->display = display;
     ctx->root = root;
-
-    /* ctx->write = bmp_writer; */
-    /* ctx->writer_private = (void*)(&bmp_ctx); */
-    /* bmp_writer_init(ctx, &bmp_ctx); */
     return 1;
-}
-
-int output_damage(struct context* ctx, int x, int y, int width, int height) {
-
-//    fprintf(stderr, "outputing damage: %d %d %d %d\n", x, y, width, height);
-    XImage *image = XGetImage(ctx->display, ctx->root
-			      , x, y, width, height, AllPlanes, ZPixmap);
-    if (!image) {
-	printf("unabled to get the image\n");
-	return 0;
-    }
-    sock_writer(ctx->sock_fd, x, y, width, height, image->data
-                , width * height * image->bits_per_pixel / 8);
-}
-
-static void slog(int prio, char* format, ...) {
-    if (prio > max_log_level) {
-        return;
-    }
-    va_list ap;
-    va_start(ap, format);
-    vsyslog(prio, format, ap);
-    va_end(ap);
 }
 
 static void daemonize() {
@@ -234,43 +285,24 @@ static void daemonize() {
         slog(LOG_ERR, "Failed to daemonize: %m");
         exit(1);
     }
-//TODO: signal handler assignement natrally goes here
 }
 
-static int get_listen_socket(uint16_t port){
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(port);
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        slog(LOG_ERR, "Socket creation failed: %m");
-        exit(1);
-    }
-    if (bind(sock, (struct sockaddr*)&addr, sizeof(struct sockaddr_in)) < 0) {
-        slog(LOG_ERR, "Socket bind failed: %m");
-        exit(1);
-    }
-    if (listen(sock, 8) < 0) {
-        slog(LOG_ERR, "Socket listen failed: %m");
-        exit(1);
-    }
-    return sock;
+static void usage() {
+    printf("USAGE: %s <display> (e.g. '%s :0')", PROG, PROG);
 }
 
 static struct context context;
 
 int main(int argc, char* argv[]) {
     char* disp_name;
-    int fin = 0;
-    uint16_t port;
+    uint16_t port = DEFAULT_PORT;
     XEvent event;
     int c;
     int debug = 0;
     int ssock;
     int len;
     long int _port;
-    while ((c = getopt (argc, argv, "hdD:p:")) != -1) {
+    while ((c = getopt (argc, argv, "hdD:l:p:u:")) != -1) {
         switch (c)
         {
         case 'd':
@@ -287,36 +319,58 @@ int main(int argc, char* argv[]) {
             disp_name = malloc(len + 1);
             strncpy(disp_name, optarg, len);
             break;
-        case 'p':
+        case 'l':
             _port = strtol(optarg, NULL, 10);
             if (_port < 1 || port > 65535) {
-                fprintf(stderr, "Port %s is not in range. RTFM on TCP ports. Good bye.\n", optarg);
-                exit(1);
+                fprintf(stderr, "Port %s is not in range."
+                        " Will use default port %d\n", optarg, DEFAULT_PORT);
+                _port = DEFAULT_PORT;
             }
-            port = (uint16_t)_port;
+            init_socket(&context.w.sctx, (uint16_t)_port);
+            context.write = sock_writer;
             break;
-        case 'h':
+        case 'p':
+            init_bmp_folder(&context.w.bctx, optarg);
+            context.write = bmp_writer;
+            break;
+#if WITH_USB
+        case 'u':
+            if (optarg != NULL) {
+                char* ppid = strchr(optarg, ':');
+                if (NULL == ppid) {
+                    usage();
+                    exit(1);
+                }
+                ppid += + 1;
+                uint16_t vid, pid;
+                vid = strtol(optarg, NULL, 16);
+                pid = strtol(ppid, NULL, 16);
+                init_usb(&context.w.uctx, vid, pid);
+            } else {
+                init_usb(&context.w.uctx, -1, -1);
+            }
+            context.work=1
+            break;
+#endif /*WITH_USB*/
+        default:
             usage();
+            exit(1);
             break;
         }
     }
-    if (debug) {
-        openlog(PROG, LOG_PERROR | LOG_CONS, LOG_DAEMON);
-    } else {
-        openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
+    openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
+    if (!debug) {
         daemonize();
     }
-    slog(LOG_DEBUG, "Waiting for incoming connection");
-    ssock = get_listen_socket(port);
-    int xfer_sock = accept(ssock, NULL, NULL);
-    context.sock_fd = xfer_sock;
+    slog(LOG_DEBUG, "%s up and running", PROG);
+
     setup_display(disp_name, &context);
-    while (! fin) {
+    while (! context.fin) {
         if (XPending(context.display) > 0) {
             XGrabServer(context.display);
             while (XPending(context.display) > 0) {
                 XNextEvent(context.display, &event);
-                if (event.type == context.damage + XDamageNotify) {
+                if (context.damage + XDamageNotify == event.type) {
                     XDamageNotifyEvent *de = (XDamageNotifyEvent *) &event;
                     if (de->drawable == context.root) {
                         output_damage(
