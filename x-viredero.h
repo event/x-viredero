@@ -21,9 +21,12 @@
 #define __X_VIREDERO_H__
 
 #include <X11/Xlibint.h>
+#include <X11/extensions/XShm.h>
+
+#define IMAGECMD 2
+#define IMAGECMD_HEAD_LEN 17
 
 #define WITH_USB 1
-
 
 #define DEFAULT_PORT 1242
 
@@ -63,13 +66,14 @@ struct sock_context {
 };
 
 struct usb_context {
-    libusb_context luctx;
-    int libusb_handle;
-}
+    libusb_device_handle* hndl;
+};
 
 struct context {
     Display* display;
     Window root;
+    XShmSegmentInfo shminfo;
+    XImage* shmimage;
     int damage;
     int fin;
     int (*write)(struct context*, int, int, int, int, char*, int);

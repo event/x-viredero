@@ -24,16 +24,21 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <syslog.h>
+
 #include <netinet/in.h>
+#include <sys/shm.h>
 
 #include <X11/Xlibint.h>
 #include <X11/extensions/Xdamage.h>
-
+#include <X11/extensions/XShm.h>
+#include <libusb-1.0/libusb.h>
 #include "x-viredero.h"
 
 #define PROG "x-viredero"
 #define SLEEP_TIME_MSEC 50
 #define DISP_NAME_MAXLEN 64
+#define DATA_BUFFER_HEAD 32
+#define BLK_OUT_ENDPOINT 1
 
 #if WITH_USB
 
@@ -60,6 +65,20 @@ static void slog(int prio, char* format, ...) {
     va_end(ap);
 }
 
+static void usage() {
+    printf("USAGE: %s <display> (e.g. '%s :0')", PROG, PROG);
+}
+
+static char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
+    char* header = data - IMAGECMD_HEAD_LEN;
+    header[0] = IMAGECMD;
+    ((int*)(header + 1))[0] = htonl(w);
+    ((int*)(header + 1))[1] = htonl(h);
+    ((int*)(header + 1))[2] = htonl(x);
+    ((int*)(header + 1))[3] = htonl(y);
+    return header;
+}
+
 static int sock_writer(struct context* ctx, int x, int y, int width, int height
 		, char* data, int size) {
     int fd = ctx->w.sctx.sock;
@@ -71,18 +90,20 @@ static int sock_writer(struct context* ctx, int x, int y, int width, int height
         }
         ctx->w.sctx.sock = fd;
     }
-    int t, sent;
-    char cmd = 2;
-    sent = send(fd, &cmd, 1, 0);
-    t = htonl(width);
-    sent = send(fd, &t, 4, 0);
-    t = htonl(height);
-    sent = send(fd, &t, 4, 0);
-    t = htonl(x);
-    sent = send(fd, &t, 4, 0);
-    t = htonl(y);
-    sent = send(fd, &t, 4, 0);
-    sent = send(fd, data, size, 0);
+    char* header = fill_imagecmd_header(data, width, height, x, y);
+    size += 17;
+    while (size > 0) {
+        int sent = send(fd, header, size, 0);
+        if (sent <= 0) {
+            slog(LOG_WARNING, "send failed: %m");
+            close(fd);
+            fd = 0;
+            return 0;
+        }
+        size -= sent;
+        header += sent;
+    }
+    return 1;
 }
 
 static void swap_lines(char* line0, char* line1, int size) {
@@ -99,7 +120,7 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
     struct bmp_context* bctx = &ctx->w.bctx;
     FILE *f;
    
-    head.bfSize = sizeof(struct bm_head) + sizeof(struct bm_info_head)
+    bctx->head.bfSize = sizeof(struct bm_head) + sizeof(struct bm_info_head)
 	+ width * height * 4;
     bctx->ihead.biWidth = width;
     bctx->ihead.biHeight = height;
@@ -110,7 +131,7 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
     if(f == NULL)
 	return;
     fwrite(&bctx->head, sizeof(struct bm_head), 1, f);
-    fwrite(&ihead->head, sizeof(struct bm_info_head), 1, f);
+    fwrite(&bctx->ihead, sizeof(struct bm_info_head), 1, f);
     int i;
     int byte_w = 4 * width;
     for (i = 0; i < height/2; i += 1) {
@@ -123,19 +144,21 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
 
 int output_damage(struct context* ctx, int x, int y, int width, int height) {
     slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
-    XImage *image = XGetImage(ctx->display, ctx->root
-			      , x, y, width, height, AllPlanes, ZPixmap);
-    if (!image) {
-	printf("unabled to get the image\n");
+    ctx->shmimage->width = width;
+    ctx->shmimage->height = height;
+    if (!XShmGetImage(ctx->display, ctx->root
+                      , ctx->shmimage, x, y, AllPlanes)) {
+	slog(LOG_ERR, "unabled to get the image\n");
 	return 0;
     }
-    ctx->write(ctx, x, y, width, height, image->data
-               , width * height * image->bits_per_pixel / 8);
+    ctx->write(ctx, x, y, width, height, ctx->shmimage->data
+               , width * height * ctx->shmimage->bits_per_pixel / 8);
+    return 1;
 }
 
 #if WITH_USB
 
-static int xfer_or_die(libusb_handle* hndl, int wIdx, char* str) {
+static int xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
     int res = libusb_control_transfer(hndl, 0x40, 52, 0, wIdx
                                       , str, strlen(str), 0);
     if (res < 0) {
@@ -147,7 +170,7 @@ static int xfer_or_die(libusb_handle* hndl, int wIdx, char* str) {
 }
 
 static int try_setup_accessory(libusb_device* dev) {
-    libusb_handle* hndl;
+    libusb_device_handle* hndl;
     unsigned char buf[2];
     int res;
     res = libusb_open(dev, &hndl);
@@ -184,33 +207,87 @@ static int try_setup_accessory(libusb_device* dev) {
     {
         return 0;
     }
-    response = libusb_control_transfer(hndl,0x40,53,0,0,NULL,0,0);
+    libusb_control_transfer(hndl, 0x40, 53, 0, 0, NULL, 0, 0);
     libusb_release_interface(hndl, 0);
+    return 1;
 }
 
-static char init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
+static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
     libusb_device** devs;
     libusb_device* tgt = NULL;
     int cnt;
+    uint8_t port, bus;
     libusb_set_debug(NULL, 3);
-    cnt = libusb_get_device_list9);
+    cnt = libusb_get_device_list(NULL, &devs);
     if (cnt < 0) {
         slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
         exit(1);
     }
     while (cnt > 0 && NULL == tgt) {
         cnt -= 1;
-        libusb_open(&dev[cnt], &hndl);
-        
-        if ()
-            
+        if (try_setup_accessory(devs[cnt])) {
+            tgt = devs[cnt];
+        }            
     }
+    if (NULL == tgt) {
+        slog(LOG_ERR, "USB: failed to setup accessory mode on any device");
+        exit(1);
+    }
+    port = libusb_get_port_number(tgt);
+    bus = libusb_get_bus_number(tgt);
+    libusb_free_device_list(devs, 1);
+    cnt = libusb_get_device_list(NULL, &devs);
+    if (cnt < 0) {
+        slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
+        exit(1);
+    }
+    cnt -= 1;
+    while (cnt >= 0 && (libusb_get_bus_number(devs[cnt]) != bus
+                        || libusb_get_port_number(devs[cnt]) != port)) {
+        cnt -= 1;
+    }
+    if (cnt < 0) {
+        slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
+        exit(1);
+    }
+    int res;
+    res = libusb_open(devs[cnt], &uctx->hndl);
+    libusb_free_device_list(devs, 1);
+    
+    if (res < 0) {
+        slog(LOG_DEBUG, "USB: failed to open : %s", libusb_strerror(res));
+        return;
+    }
+    res = libusb_claim_interface(uctx->hndl, 0);
+    if (res < 0) {
+        slog(LOG_DEBUG, "USB: failed to claim interface : %s", libusb_strerror(res));
+        libusb_close(uctx->hndl);
+        return;
+    }
+}
+
+static int usb_writer(struct context* ctx, int x, int y, int width, int height
+                      , char* data, int size) {
+    int sent;
+    char* header = fill_imagecmd_header(data, width, height, x, y);
+    size += 17;
+    while (size > 0) { 
+        int response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_OUT_ENDPOINT, header
+                                        , size, &sent, 1000);
+        if (response != 0) {
+            slog(LOG_ERR, "USB transfer failed: %s", libusb_strerror(response));
+            return 0;
+        }
+        size -= sent;
+        header += sent;
+    }
+    return 1;
 }
 #endif
 
 static void init_bmp_folder(struct bmp_context* bctx, char* path) {
     bctx->num = 0;
-    bctx->path = strcpy(path);
+    strcpy(path, bctx->path);
     bctx->fname = malloc(BMP_FNAME_BUF_SIZE);
     bctx->head.bfType = 0x4D42;
     bctx->head.bfOffBits = sizeof(struct bm_head) + sizeof(struct bm_info_head);
@@ -252,8 +329,8 @@ static void init_socket(struct sock_context* sctx, uint16_t port) {
 static int setup_display(const char * display_name, struct context* ctx) {
     Display * display = XOpenDisplay(display_name);
     if (!display) {
-        fprintf(stderr, "%s:  unable to open display '%s'\n"
-                , PROG, display_name);
+        slog(LOG_ERR, "unable to open display '%s'\n"
+                , display_name);
         usage();
         return 0;
     }
@@ -262,19 +339,43 @@ static int setup_display(const char * display_name, struct context* ctx) {
 
     int damage_error;
     if (!XDamageQueryExtension (display, &ctx->damage, &damage_error)) {
-        fprintf(stderr, "%s: Backend does not have damage extension\n", PROG);
+        slog(LOG_ERR, "backend does not have Xdamage extension\n");
         return 0;
     }
-    XDamageCreate (display, root, XDamageReportRawRectangles);
+    if (!XShmQueryExtension(display)) {
+        slog(LOG_ERR, "backend does not have XShm extension\n");
+        return 0;
+    }
+    XDamageCreate(display, root, XDamageReportRawRectangles);
     XWindowAttributes attrib;
     XGetWindowAttributes(display, root, &attrib);
     if (0 == attrib.width || 0 == attrib.height)
     {
-        fprintf(stderr, "%s: Bad root with %d x %d\n"
-                , PROG, attrib.width, attrib.height);
+        slog(LOG_ERR, "bad root with size %dx%d\n"
+                , attrib.width, attrib.height);
         return 0;
     }
-
+    int scr = XDefaultScreen(display);
+    ctx->shmimage = XShmCreateImage(
+        display, DefaultVisual(display, scr), DefaultDepth(display, scr)
+        , ZPixmap, NULL, &ctx->shminfo, attrib.width, attrib.height);
+    ctx->shminfo.shmid = shmget(
+        IPC_PRIVATE
+        , DATA_BUFFER_HEAD + ctx->shmimage->bytes_per_line * ctx->shmimage->height
+        , IPC_CREAT | 0777);
+    if (ctx->shminfo.shmid == -1) {
+        slog(LOG_ERR, "Cannot get shared memory!");
+        return 0; 
+    }
+ 
+    ctx->shminfo.shmaddr = shmat(ctx->shminfo.shmid, 0, 0) + DATA_BUFFER_HEAD;
+    ctx->shminfo.readOnly = False;
+    ctx->shmimage->data = ctx->shminfo.shmaddr;
+    if (!XShmAttach(display, &ctx->shminfo)) {
+        slog(LOG_ERR, "Failed to attach shared memory!");
+        return 0;
+    }
+ 
     ctx->display = display;
     ctx->root = root;
     return 1;
@@ -285,10 +386,6 @@ static void daemonize() {
         slog(LOG_ERR, "Failed to daemonize: %m");
         exit(1);
     }
-}
-
-static void usage() {
-    printf("USAGE: %s <display> (e.g. '%s :0')", PROG, PROG);
 }
 
 static struct context context;
@@ -349,7 +446,6 @@ int main(int argc, char* argv[]) {
             } else {
                 init_usb(&context.w.uctx, -1, -1);
             }
-            context.work=1
             break;
 #endif /*WITH_USB*/
         default:

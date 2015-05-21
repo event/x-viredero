@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-I. -Werror
-LDFLAGS=-lX11 -lXdamage
+LDFLAGS=-lX11 -lXdamage -lusb-1.0 -lXext
 OBJ = x-viredero.o
 TEST_OBJ = xv-test-client.o
 
