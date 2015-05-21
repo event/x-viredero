@@ -66,7 +66,7 @@ static void slog(int prio, char* format, ...) {
 }
 
 static void usage() {
-    printf("USAGE: %s <display> (e.g. '%s :0')", PROG, PROG);
+    printf("USAGE: %s <opts>\n", PROG);
 }
 
 static char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
@@ -127,6 +127,7 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
     bctx->ihead.biSizeImage = width * height * 4;
 
     snprintf(bctx->fname, BMP_FNAME_BUF_SIZE, bctx->path, bctx->num);
+    slog(LOG_DEBUG, "save damage to %s", bctx->fname);
     f = fopen(bctx->fname, "wb");
     if(f == NULL)
 	return;
@@ -287,7 +288,7 @@ static int usb_writer(struct context* ctx, int x, int y, int width, int height
 
 static void init_bmp_folder(struct bmp_context* bctx, char* path) {
     bctx->num = 0;
-    strcpy(path, bctx->path);
+    bctx->path = path;
     bctx->fname = malloc(BMP_FNAME_BUF_SIZE);
     bctx->head.bfType = 0x4D42;
     bctx->head.bfOffBits = sizeof(struct bm_head) + sizeof(struct bm_info_head);
@@ -314,6 +315,10 @@ static void init_socket(struct sock_context* sctx, uint16_t port) {
         slog(LOG_ERR, "Socket creation failed: %m");
         exit(1);
     }
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
+        slog(LOG_ERR, "Socket optionn failed: %m");
+        exit(1);
+    }        
     if (bind(sock, (struct sockaddr*)&addr, sizeof(struct sockaddr_in)) < 0) {
         slog(LOG_ERR, "Socket bind failed: %m");
         exit(1);
@@ -392,6 +397,7 @@ static struct context context;
 
 int main(int argc, char* argv[]) {
     char* disp_name;
+    char* path;
     uint16_t port = DEFAULT_PORT;
     XEvent event;
     int c;
@@ -427,7 +433,16 @@ int main(int argc, char* argv[]) {
             context.write = sock_writer;
             break;
         case 'p':
-            init_bmp_folder(&context.w.bctx, optarg);
+            len = strlen(optarg);
+            if (len > DISP_NAME_MAXLEN) {
+                fprintf(stderr, "Display name %s is longer then %d"
+                        ". We can't handle it. Good bye.\n"
+                        , optarg, DISP_NAME_MAXLEN);
+                exit(1);
+            }
+            path = malloc(len + 1);
+            strncpy(path, optarg, len);
+            init_bmp_folder(&context.w.bctx, path);
             context.write = bmp_writer;
             break;
 #if WITH_USB
@@ -454,6 +469,7 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
+    
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
     if (!debug) {
         daemonize();
@@ -462,22 +478,18 @@ int main(int argc, char* argv[]) {
 
     setup_display(disp_name, &context);
     while (! context.fin) {
-        if (XPending(context.display) > 0) {
-            XGrabServer(context.display);
-            while (XPending(context.display) > 0) {
-                XNextEvent(context.display, &event);
-                if (context.damage + XDamageNotify == event.type) {
-                    XDamageNotifyEvent *de = (XDamageNotifyEvent *) &event;
-                    if (de->drawable == context.root) {
-                        output_damage(
-                            &context, de->area.x, de->area.y
-                            , de->area.width, de->area.height);
-                    }
+        while (XPending(context.display) > 0) {
+            XNextEvent(context.display, &event);
+            if (context.damage + XDamageNotify == event.type) {
+                XDamageNotifyEvent *de = (XDamageNotifyEvent *) &event;
+                if (de->drawable == context.root) {
+                    output_damage(
+                        &context, de->area.x, de->area.y
+                        , de->area.width, de->area.height);
                 }
             }
-	    XUngrabServer(context.display);
-	    usleep(SLEEP_TIME_MSEC);
         }
+        usleep(SLEEP_TIME_MSEC);
     }
 }
   
