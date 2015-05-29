@@ -38,7 +38,7 @@
 #define SLEEP_TIME_MSEC 50
 #define DISP_NAME_MAXLEN 64
 #define DATA_BUFFER_HEAD 32
-#define BLK_OUT_ENDPOINT 1
+#define BLK_OUT_ENDPOINT 2
 
 #if WITH_USB
 
@@ -62,6 +62,8 @@ static void slog(int prio, char* format, ...) {
     va_list ap;
     va_start(ap, format);
     vsyslog(prio, format, ap);
+//    vfprintf(stderr, format, ap);
+//    fprintf(stderr, "\n");
     va_end(ap);
 }
 
@@ -185,6 +187,7 @@ static int try_setup_accessory(libusb_device* dev) {
         libusb_close(hndl);
         return 0;
     }
+
     res = libusb_control_transfer(
         hndl, 0xC0 //bmRequestType
         , 51 //bRequest
@@ -218,6 +221,7 @@ static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
     libusb_device* tgt = NULL;
     int cnt;
     uint8_t port, bus;
+    libusb_init(NULL);
     libusb_set_debug(NULL, 3);
     cnt = libusb_get_device_list(NULL, &devs);
     if (cnt < 0) {
@@ -236,7 +240,9 @@ static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
     }
     port = libusb_get_port_number(tgt);
     bus = libusb_get_bus_number(tgt);
+    slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", port, bus);
     libusb_free_device_list(devs, 1);
+    sleep(50);
     cnt = libusb_get_device_list(NULL, &devs);
     if (cnt < 0) {
         slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
@@ -251,17 +257,17 @@ static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
         slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
         exit(1);
     }
-    int res;
-    res = libusb_open(devs[cnt], &uctx->hndl);
+    slog(LOG_NOTICE, "USB: accessory mode setup success");
+    int res = libusb_open(devs[cnt], &uctx->hndl);
     libusb_free_device_list(devs, 1);
     
     if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to open : %s", libusb_strerror(res));
+        slog(LOG_ERR, "USB: failed to open : %s", libusb_strerror(res));
         return;
     }
     res = libusb_claim_interface(uctx->hndl, 0);
     if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to claim interface : %s", libusb_strerror(res));
+        slog(LOG_ERR, "USB: failed to claim interface : %s", libusb_strerror(res));
         libusb_close(uctx->hndl);
         return;
     }
@@ -274,7 +280,7 @@ static int usb_writer(struct context* ctx, int x, int y, int width, int height
     size += 17;
     while (size > 0) { 
         int response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_OUT_ENDPOINT, header
-                                        , size, &sent, 1000);
+                                        , size, &sent, 100000);
         if (response != 0) {
             slog(LOG_ERR, "USB transfer failed: %s", libusb_strerror(response));
             return 0;
@@ -405,7 +411,8 @@ int main(int argc, char* argv[]) {
     int ssock;
     int len;
     long int _port;
-    while ((c = getopt (argc, argv, "hdD:l:p:u:")) != -1) {
+    openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
+    while ((c = getopt (argc, argv, "hdD:l:p:u::")) != -1) {
         switch (c)
         {
         case 'd':
@@ -461,6 +468,7 @@ int main(int argc, char* argv[]) {
             } else {
                 init_usb(&context.w.uctx, -1, -1);
             }
+            context.write = usb_writer;
             break;
 #endif /*WITH_USB*/
         default:
@@ -470,7 +478,6 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
     if (!debug) {
         daemonize();
     }
