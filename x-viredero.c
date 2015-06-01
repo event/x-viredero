@@ -39,7 +39,6 @@
 #define DISP_NAME_MAXLEN 64
 #define DATA_BUFFER_HEAD 32
 #define BLK_OUT_ENDPOINT 2
-
 #if WITH_USB
 
 #define USB_MANUFACTURER "Leonid Movshovich"
@@ -48,6 +47,7 @@
 #define USB_VERSION "2.1"
 #define USB_URI "http://play.google.com/"
 #define USB_SERIAL_NUM "12344321"
+#define USB_XFER_TIMEO_MSEC 1000
 
 #endif
 
@@ -242,7 +242,7 @@ static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
     bus = libusb_get_bus_number(tgt);
     slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", port, bus);
     libusb_free_device_list(devs, 1);
-    sleep(50);
+    sleep(5);
     cnt = libusb_get_device_list(NULL, &devs);
     if (cnt < 0) {
         slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
@@ -280,7 +280,7 @@ static int usb_writer(struct context* ctx, int x, int y, int width, int height
     size += 17;
     while (size > 0) { 
         int response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_OUT_ENDPOINT, header
-                                        , size, &sent, 100000);
+                                            , size, &sent, USB_XFER_TIMEO_MSEC);
         if (response != 0) {
             slog(LOG_ERR, "USB transfer failed: %s", libusb_strerror(response));
             return 0;
