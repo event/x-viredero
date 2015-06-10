@@ -82,7 +82,7 @@ static char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
 }
 
 static int sock_writer(struct context* ctx, int x, int y, int width, int height
-		, char* data, int size) {
+                       , char* data, int size) {
     int fd = ctx->w.sctx.sock;
     if (0 == fd) {
         fd = accept(ctx->w.sctx.listen_sock, NULL, NULL);
@@ -111,19 +111,19 @@ static int sock_writer(struct context* ctx, int x, int y, int width, int height
 static void swap_lines(char* line0, char* line1, int size) {
     int i;
     for (i = 0; i < size; i += 1) {
-	line0[i] ^= line1[i];
-	line1[i] ^= line0[i];
-	line0[i] ^= line1[i];
+        line0[i] ^= line1[i];
+        line1[i] ^= line0[i];
+        line0[i] ^= line1[i];
     }
 }
 
 static int bmp_writer(struct context* ctx, int x, int y, int width, int height
-	       , char* data, int size) {
+                      , char* data, int size) {
     struct bmp_context* bctx = &ctx->w.bctx;
     FILE *f;
    
     bctx->head.bfSize = sizeof(struct bm_head) + sizeof(struct bm_info_head)
-	+ width * height * 4;
+        + width * height * 4;
     bctx->ihead.biWidth = width;
     bctx->ihead.biHeight = height;
     bctx->ihead.biSizeImage = width * height * 4;
@@ -132,13 +132,13 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
     slog(LOG_DEBUG, "save damage to %s", bctx->fname);
     f = fopen(bctx->fname, "wb");
     if(f == NULL)
-	return;
+        return;
     fwrite(&bctx->head, sizeof(struct bm_head), 1, f);
     fwrite(&bctx->ihead, sizeof(struct bm_info_head), 1, f);
     int i;
     int byte_w = 4 * width;
     for (i = 0; i < height/2; i += 1) {
-    	swap_lines(&data[byte_w * i], &data[byte_w * (height - i - 1)], 4 * width);
+        swap_lines(&data[byte_w * i], &data[byte_w * (height - i - 1)], 4 * width);
     }
     fwrite(data, 4*width*height, 1, f);
     fclose(f);
@@ -151,8 +151,8 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
     ctx->shmimage->height = height;
     if (!XShmGetImage(ctx->display, ctx->root
                       , ctx->shmimage, x, y, AllPlanes)) {
-	slog(LOG_ERR, "unabled to get the image\n");
-	return 0;
+        slog(LOG_ERR, "unabled to get the image\n");
+        return 0;
     }
     ctx->write(ctx, x, y, width, height, ctx->shmimage->data
                , width * height * ctx->shmimage->bits_per_pixel / 8);
@@ -203,11 +203,11 @@ static int try_setup_accessory(libusb_device* dev) {
     slog(LOG_DEBUG, "USB Device version code: %d", buf[1] << 8 | buf[0]);
     
     if (! (xfer_or_die(hndl, 0, USB_MANUFACTURER)
-            && xfer_or_die(hndl, 1, USB_MODEL)
-            && xfer_or_die(hndl, 2, USB_DESCRIPTION)
-            && xfer_or_die(hndl, 3, USB_VERSION)
-            && xfer_or_die(hndl, 4, USB_URI)
-            && xfer_or_die(hndl, 5, USB_SERIAL_NUM)))
+           && xfer_or_die(hndl, 1, USB_MODEL)
+           && xfer_or_die(hndl, 2, USB_DESCRIPTION)
+           && xfer_or_die(hndl, 3, USB_VERSION)
+           && xfer_or_die(hndl, 4, USB_URI)
+           && xfer_or_die(hndl, 5, USB_SERIAL_NUM)))
     {
         return 0;
     }
@@ -341,7 +341,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
     Display * display = XOpenDisplay(display_name);
     if (!display) {
         slog(LOG_ERR, "unable to open display '%s'\n"
-                , display_name);
+             , display_name);
         usage();
         return 0;
     }
@@ -363,7 +363,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
     if (0 == attrib.width || 0 == attrib.height)
     {
         slog(LOG_ERR, "bad root with size %dx%d\n"
-                , attrib.width, attrib.height);
+             , attrib.width, attrib.height);
         return 0;
     }
     int scr = XDefaultScreen(display);
