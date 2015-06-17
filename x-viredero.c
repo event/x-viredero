@@ -81,6 +81,22 @@ static char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
     return header;
 }
 
+static void zpixmap2rgb(char* data, unsigned long len
+                        , char roff, char goff, char boff) {
+    unsigned long* src = (unsigned long*)data;
+    len = len / 4;
+    while (len > 0) {
+        char red = (src[0] >> roff) && 0xFF;
+        char green = (src[0] >> goff) && 0xFF;
+        char blue = (src[0] >> boff) && 0xFF;
+        data[0] = red;
+        data[1] = green;
+        data[2] = blue;
+        data += 3;
+        src += 1;
+    }
+}
+
 static int sock_writer(struct context* ctx, int x, int y, int width, int height
                        , char* data, int size) {
     int fd = ctx->w.sctx.sock;
