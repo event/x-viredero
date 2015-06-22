@@ -83,15 +83,15 @@ static char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
 
 static void zpixmap2rgb(char* data, unsigned long len
                         , char roff, char goff, char boff) {
-    unsigned long* src = (unsigned long*)data;
-    len = len / 4;
-    while (len > 0) {
-        char red = (src[0] >> roff) && 0xFF;
-        char green = (src[0] >> goff) && 0xFF;
-        char blue = (src[0] >> boff) && 0xFF;
-        data[0] = red;
-        data[1] = green;
-        data[2] = blue;
+    uint32_t* src = (uint32_t*)data;
+    uint32_t* end = src + len;
+    while (src < end) {
+        char red = (src[0] >> roff) & 0xFF;
+        char green = (src[0] >> goff) & 0xFF;
+        char blue = (src[0] >> boff) & 0xFF;
+        data[0] = blue;
+        data[1] = red;
+        data[2] = green;
         data += 3;
         src += 1;
     }
@@ -139,10 +139,10 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
     FILE *f;
    
     bctx->head.bfSize = sizeof(struct bm_head) + sizeof(struct bm_info_head)
-        + width * height * 4;
+        + size;
     bctx->ihead.biWidth = width;
     bctx->ihead.biHeight = height;
-    bctx->ihead.biSizeImage = width * height * 4;
+    bctx->ihead.biSizeImage = size;
 
     snprintf(bctx->fname, BMP_FNAME_BUF_SIZE, bctx->path, bctx->num);
     slog(LOG_DEBUG, "save damage to %s", bctx->fname);
@@ -152,11 +152,11 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
     fwrite(&bctx->head, sizeof(struct bm_head), 1, f);
     fwrite(&bctx->ihead, sizeof(struct bm_info_head), 1, f);
     int i;
-    int byte_w = 4 * width;
+    int byte_w = 3 * width;
     for (i = 0; i < height/2; i += 1) {
-        swap_lines(&data[byte_w * i], &data[byte_w * (height - i - 1)], 4 * width);
+        swap_lines(&data[byte_w * i], &data[byte_w * (height - i - 1)], 3 * width);
     }
-    fwrite(data, 4*width*height, 1, f);
+    fwrite(data, size, 1, f);
     fclose(f);
     bctx->num += 1;
 }
@@ -170,8 +170,9 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
         slog(LOG_ERR, "unabled to get the image\n");
         return 0;
     }
+    zpixmap2rgb(ctx->shmimage->data, width * height, 16, 8, 0);
     ctx->write(ctx, x, y, width, height, ctx->shmimage->data
-               , width * height * ctx->shmimage->bits_per_pixel / 8);
+               , width * height * 3);
     return 1;
 }
 
@@ -319,7 +320,7 @@ static void init_bmp_folder(struct bmp_context* bctx, char* path) {
     
     bctx->ihead.biSize = sizeof(struct bm_info_head);
     bctx->ihead.biPlanes = 1;
-    bctx->ihead.biBitCount = 32;
+    bctx->ihead.biBitCount = 24;
     bctx->ihead.biCompression = 0;
     bctx->ihead.biXPelsPerMeter = 0;
     bctx->ihead.biYPelsPerMeter = 0;
