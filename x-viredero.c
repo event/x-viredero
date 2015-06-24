@@ -31,7 +31,7 @@
 #include <X11/Xlibint.h>
 #include <X11/extensions/Xdamage.h>
 #include <X11/extensions/XShm.h>
-#include <libusb-1.0/libusb.h>
+
 #include "x-viredero.h"
 
 #define PROG "x-viredero"
@@ -39,8 +39,9 @@
 #define DISP_NAME_MAXLEN 64
 #define DATA_BUFFER_HEAD 32
 #define BLK_OUT_ENDPOINT 2
-#if WITH_USB
 
+#if WITH_USB
+#include <libusb-1.0/libusb.h>
 #define USB_MANUFACTURER "Leonid Movshovich"
 #define USB_MODEL "x-viredero"
 #define USB_DESCRIPTION "viredero is a virtual reality desktop view"
@@ -48,7 +49,6 @@
 #define USB_URI "http://play.google.com/"
 #define USB_SERIAL_NUM "12344321"
 #define USB_XFER_TIMEO_MSEC 1000
-
 #endif
 
 #define BMP_FNAME_BUF_SIZE 128
@@ -62,8 +62,6 @@ static void slog(int prio, char* format, ...) {
     va_list ap;
     va_start(ap, format);
     vsyslog(prio, format, ap);
-//    vfprintf(stderr, format, ap);
-//    fprintf(stderr, "\n");
     va_end(ap);
 }
 

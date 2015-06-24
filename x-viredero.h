@@ -26,8 +26,6 @@
 #define IMAGECMD 2
 #define IMAGECMD_HEAD_LEN 17
 
-#define WITH_USB 1
-
 #define DEFAULT_PORT 1242
 
 struct __attribute__ ((__packed__)) bm_head {

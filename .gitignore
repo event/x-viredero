@@ -2,3 +2,5 @@
 *.o
 x-viredero
 .sconsign.dblite
+config.log
+.sconf_temp
