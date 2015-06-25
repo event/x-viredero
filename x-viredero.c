@@ -47,8 +47,11 @@
 #define USB_DESCRIPTION "viredero is a virtual reality desktop view"
 #define USB_VERSION "2.1"
 #define USB_URI "http://play.google.com/"
-#define USB_SERIAL_NUM "12344321"
+#define USB_SERIAL_NUM "130"
 #define USB_XFER_TIMEO_MSEC 1000
+#define USB_ACCESSORY_VID 0x18D1
+#define USB_ACCESSORY_PID_MASK 0xFFF0
+#define USB_ACCESSORY_PID 0x2D00
 #endif
 
 #define BMP_FNAME_BUF_SIZE 128
@@ -236,6 +239,7 @@ static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
     libusb_device* tgt = NULL;
     int cnt;
     uint8_t port, bus;
+    int setup_required = 1;
     libusb_init(NULL);
     libusb_set_debug(NULL, 3);
     cnt = libusb_get_device_list(NULL, &devs);
@@ -244,33 +248,44 @@ static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
         exit(1);
     }
     while (cnt > 0 && NULL == tgt) {
+        struct libusb_device_descriptor desc;
         cnt -= 1;
-        if (try_setup_accessory(devs[cnt])) {
+        if (libusb_get_device_descriptor(devs[cnt], &desc) != 0) {
+            slog(LOG_WARNING, "USB: failed to get device descriptor");
+        } else if (desc.idVendor == USB_ACCESSORY_VID
+                   && (desc.idProduct & USB_ACCESSORY_PID_MASK) == USB_ACCESSORY_PID) {
             tgt = devs[cnt];
-        }            
+            setup_required = 0;
+        } else if (0 == vid || (desc.idVendor == vid && desc.idProduct == pid)) {
+            if (try_setup_accessory(devs[cnt])) {
+                tgt = devs[cnt];
+            }
+        }
     }
     if (NULL == tgt) {
         slog(LOG_ERR, "USB: failed to setup accessory mode on any device");
         exit(1);
     }
-    port = libusb_get_port_number(tgt);
-    bus = libusb_get_bus_number(tgt);
-    slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", port, bus);
-    libusb_free_device_list(devs, 1);
-    sleep(5);
-    cnt = libusb_get_device_list(NULL, &devs);
-    if (cnt < 0) {
-        slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
-        exit(1);
-    }
-    cnt -= 1;
-    while (cnt >= 0 && (libusb_get_bus_number(devs[cnt]) != bus
-                        || libusb_get_port_number(devs[cnt]) != port)) {
+    if (setup_required) {
+        port = libusb_get_port_number(tgt);
+        bus = libusb_get_bus_number(tgt);
+        slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", port, bus);
+        libusb_free_device_list(devs, 1);
+        sleep(5);
+        cnt = libusb_get_device_list(NULL, &devs);
+        if (cnt < 0) {
+            slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
+            exit(1);
+        }
         cnt -= 1;
-    }
-    if (cnt < 0) {
-        slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
-        exit(1);
+        while (cnt >= 0 && (libusb_get_bus_number(devs[cnt]) != bus
+                            || libusb_get_port_number(devs[cnt]) != port)) {
+            cnt -= 1;
+        }
+        if (cnt < 0) {
+            slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
+            exit(1);
+        }
     }
     slog(LOG_NOTICE, "USB: accessory mode setup success");
     int res = libusb_open(devs[cnt], &uctx->hndl);
@@ -481,7 +496,7 @@ int main(int argc, char* argv[]) {
                 pid = strtol(ppid, NULL, 16);
                 init_usb(&context.w.uctx, vid, pid);
             } else {
-                init_usb(&context.w.uctx, -1, -1);
+                init_usb(&context.w.uctx, 0, 0);
             }
             context.write = usb_writer;
             break;
