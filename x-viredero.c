@@ -74,7 +74,7 @@ static void usage() {
 
 static char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
     char* header = data - IMAGECMD_HEAD_LEN;
-    header[0] = IMAGECMD;
+    header[0] = (char)Image;
     ((int*)(header + 1))[0] = htonl(w);
     ((int*)(header + 1))[1] = htonl(h);
     ((int*)(header + 1))[2] = htonl(x);
@@ -98,7 +98,7 @@ static void zpixmap2rgb(char* data, unsigned long len
     }
 }
 
-static int sock_writer(struct context* ctx, int x, int y, int width, int height
+static int sock_img_writer(struct context* ctx, int x, int y, int width, int height
                        , char* data, int size) {
     int fd = ctx->w.sctx.sock;
     if (0 == fd) {
@@ -125,6 +125,10 @@ static int sock_writer(struct context* ctx, int x, int y, int width, int height
     return 1;
 }
 
+int sock_pntr_writer(struct context* ctx, int x, int y) {
+    return 1;
+}
+
 static void swap_lines(char* line0, char* line1, int size) {
     int i;
     for (i = 0; i < size; i += 1) {
@@ -134,7 +138,7 @@ static void swap_lines(char* line0, char* line1, int size) {
     }
 }
 
-static int bmp_writer(struct context* ctx, int x, int y, int width, int height
+static int bmp_img_writer(struct context* ctx, int x, int y, int width, int height
                       , char* data, int size) {
     struct bmp_context* bctx = &ctx->w.bctx;
     FILE *f;
@@ -163,7 +167,7 @@ static int bmp_writer(struct context* ctx, int x, int y, int width, int height
 }
 
 int output_damage(struct context* ctx, int x, int y, int width, int height) {
-    slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
+//    slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
     ctx->shmimage->width = width;
     ctx->shmimage->height = height;
     if (!XShmGetImage(ctx->display, ctx->root
@@ -172,8 +176,8 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
         return 0;
     }
     zpixmap2rgb(ctx->shmimage->data, width * height, 16, 8, 0);
-    ctx->write(ctx, x, y, width, height, ctx->shmimage->data
-               , width * height * 3);
+    ctx->image_write(ctx, x, y, width, height, ctx->shmimage->data
+                     , width * height * 3);
     return 1;
 }
 
@@ -303,22 +307,36 @@ static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
     }
 }
 
-static int usb_writer(struct context* ctx, int x, int y, int width, int height
-                      , char* data, int size) {
-    int sent;
-    char* header = fill_imagecmd_header(data, width, height, x, y);
-    size += 17;
+static int usb_write(struct context* ctx, char* data, int size) {
+    int sent = 0;
     while (size > 0) { 
-        int response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_OUT_ENDPOINT, header
+        int response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_OUT_ENDPOINT, data
                                             , size, &sent, USB_XFER_TIMEO_MSEC);
         if (response != 0) {
             slog(LOG_ERR, "USB transfer failed: %s", libusb_strerror(response));
             return 0;
         }
         size -= sent;
-        header += sent;
+        data += sent;
     }
     return 1;
+}
+
+static int usb_img_writer(struct context* ctx, int x, int y, int width, int height
+                      , char* data, int size) {
+    char* header = fill_imagecmd_header(data, width, height, x, y);
+    size += 17;
+    return usb_write(ctx, header, size);
+}
+
+static int usb_pntr_writer(struct context* ctx, int x, int y) {
+    int size = 9;
+    char buf[9];
+    char* data;
+    data[0] = (char)Pointer;
+    ((int*)(data + 1))[0] = htonl(x);
+    ((int*)(data + 1))[1] = htonl(y);
+    return usb_write(ctx, data, size);
 }
 #endif
 
@@ -467,7 +485,8 @@ int main(int argc, char* argv[]) {
                 _port = DEFAULT_PORT;
             }
             init_socket(&context.w.sctx, (uint16_t)_port);
-            context.write = sock_writer;
+            context.image_write = sock_img_writer;
+            context.pointer_write = sock_pntr_writer;
             break;
         case 'p':
             len = strlen(optarg);
@@ -480,7 +499,7 @@ int main(int argc, char* argv[]) {
             path = malloc(len + 1);
             strncpy(path, optarg, len);
             init_bmp_folder(&context.w.bctx, path);
-            context.write = bmp_writer;
+            context.image_write = bmp_img_writer;
             break;
 #if WITH_USB
         case 'u':
@@ -498,7 +517,8 @@ int main(int argc, char* argv[]) {
             } else {
                 init_usb(&context.w.uctx, 0, 0);
             }
-            context.write = usb_writer;
+            context.image_write = usb_img_writer;
+            context.pointer_write = usb_pntr_writer;
             break;
 #endif /*WITH_USB*/
         default:
@@ -524,6 +544,11 @@ int main(int argc, char* argv[]) {
                         &context, de->area.x, de->area.y
                         , de->area.width, de->area.height);
                 }
+                /* int x, y, t; */
+                /* Window w; */
+                /* XQueryPointer(context.display, context.root, &w, &w, &x, &y */
+                /*               , &t, &t, &t); */
+                /* context.pointer_write(&context, x, y); */
             }
         }
         usleep(SLEEP_TIME_MSEC);

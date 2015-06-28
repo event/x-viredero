@@ -22,8 +22,17 @@
 
 #include <X11/Xlibint.h>
 #include <X11/extensions/XShm.h>
-
-#define IMAGECMD 2
+#if WITH_USB
+#include <libusb-1.0/libusb.h>
+#endif
+enum CommandType {
+    Init,
+    InitReply,
+    Image,
+    Pointer,
+    SceneChange,
+    ReCenter
+};
 #define IMAGECMD_HEAD_LEN 17
 
 #define DEFAULT_PORT 1242
@@ -74,12 +83,16 @@ struct context {
     XImage* shmimage;
     int damage;
     int fin;
-    int (*write)(struct context*, int, int, int, int, char*, int);
     union writer_cfg{
         struct sock_context sctx;
         struct bmp_context bctx;
         struct usb_context uctx;
     } w;
+    int (*init)(struct context*, int, int, int, int, char*, int);
+    int (*image_write)(struct context*, int, int, int, int, char*, int);
+    int (*pointer_write)(struct context*, int, int);
+    int (*scene_change)(struct context*, int, int, int, int, char*, int);
+    int (*recenter)(struct context*, int, int, int, int, char*, int);
 };
 
 #endif //__X_VIREDERO_H__
