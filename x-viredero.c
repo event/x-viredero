@@ -38,27 +38,10 @@
 #define SLEEP_TIME_MSEC 50
 #define DISP_NAME_MAXLEN 64
 #define DATA_BUFFER_HEAD 32
-#define BLK_OUT_ENDPOINT 2
-
-#if WITH_USB
-#include <libusb-1.0/libusb.h>
-#define USB_MANUFACTURER "Leonid Movshovich"
-#define USB_MODEL "x-viredero"
-#define USB_DESCRIPTION "viredero is a virtual reality desktop view"
-#define USB_VERSION "2.1"
-#define USB_URI "http://play.google.com/"
-#define USB_SERIAL_NUM "130"
-#define USB_XFER_TIMEO_MSEC 1000
-#define USB_ACCESSORY_VID 0x18D1
-#define USB_ACCESSORY_PID_MASK 0xFFF0
-#define USB_ACCESSORY_PID 0x2D00
-#endif
-
-#define BMP_FNAME_BUF_SIZE 128
 
 static int max_log_level = 8;
 
-static void slog(int prio, char* format, ...) {
+void slog(int prio, char* format, ...) {
     if (prio > max_log_level) {
         return;
     }
@@ -72,7 +55,7 @@ static void usage() {
     printf("USAGE: %s <opts>\n", PROG);
 }
 
-static char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
+char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
     char* header = data - IMAGECMD_HEAD_LEN;
     header[0] = (char)Image;
     ((int*)(header + 1))[0] = htonl(w);
@@ -125,45 +108,8 @@ static int sock_img_writer(struct context* ctx, int x, int y, int width, int hei
     return 1;
 }
 
-int sock_pntr_writer(struct context* ctx, int x, int y) {
+int dummy_pointer_writer(struct context* ctx, int x, int y) {
     return 1;
-}
-
-static void swap_lines(char* line0, char* line1, int size) {
-    int i;
-    for (i = 0; i < size; i += 1) {
-        line0[i] ^= line1[i];
-        line1[i] ^= line0[i];
-        line0[i] ^= line1[i];
-    }
-}
-
-static int bmp_img_writer(struct context* ctx, int x, int y, int width, int height
-                      , char* data, int size) {
-    struct bmp_context* bctx = &ctx->w.bctx;
-    FILE *f;
-   
-    bctx->head.bfSize = sizeof(struct bm_head) + sizeof(struct bm_info_head)
-        + size;
-    bctx->ihead.biWidth = width;
-    bctx->ihead.biHeight = height;
-    bctx->ihead.biSizeImage = size;
-
-    snprintf(bctx->fname, BMP_FNAME_BUF_SIZE, bctx->path, bctx->num);
-    slog(LOG_DEBUG, "save damage to %s", bctx->fname);
-    f = fopen(bctx->fname, "wb");
-    if(f == NULL)
-        return;
-    fwrite(&bctx->head, sizeof(struct bm_head), 1, f);
-    fwrite(&bctx->ihead, sizeof(struct bm_info_head), 1, f);
-    int i;
-    int byte_w = 3 * width;
-    for (i = 0; i < height/2; i += 1) {
-        swap_lines(&data[byte_w * i], &data[byte_w * (height - i - 1)], 3 * width);
-    }
-    fwrite(data, size, 1, f);
-    fclose(f);
-    bctx->num += 1;
 }
 
 int output_damage(struct context* ctx, int x, int y, int width, int height) {
@@ -181,183 +127,6 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
     return 1;
 }
 
-#if WITH_USB
-
-static int xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
-    int res = libusb_control_transfer(hndl, 0x40, 52, 0, wIdx
-                                      , str, strlen(str), 0);
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: xfer failed: %s", libusb_strerror(res));
-        libusb_close(hndl);
-        return 0;
-    }
-    return 1;
-}
-
-static int try_setup_accessory(libusb_device* dev) {
-    libusb_device_handle* hndl;
-    unsigned char buf[2];
-    int res;
-    res = libusb_open(dev, &hndl);
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to open : %s", libusb_strerror(res));
-        return 0;
-    }
-    res = libusb_claim_interface(hndl, 0);
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to claim interface : %s", libusb_strerror(res));
-        libusb_close(hndl);
-        return 0;
-    }
-
-    res = libusb_control_transfer(
-        hndl, 0xC0 //bmRequestType
-        , 51 //bRequest
-        , 0, 0 //wValue, wIndex
-        , buf //data
-        , 2 //wLength
-        , 0); //timeout
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: xfer failed: %s", libusb_strerror(res));
-        libusb_close(hndl);
-        return 0;
-    }
-    slog(LOG_DEBUG, "USB Device version code: %d", buf[1] << 8 | buf[0]);
-    
-    if (! (xfer_or_die(hndl, 0, USB_MANUFACTURER)
-           && xfer_or_die(hndl, 1, USB_MODEL)
-           && xfer_or_die(hndl, 2, USB_DESCRIPTION)
-           && xfer_or_die(hndl, 3, USB_VERSION)
-           && xfer_or_die(hndl, 4, USB_URI)
-           && xfer_or_die(hndl, 5, USB_SERIAL_NUM)))
-    {
-        return 0;
-    }
-    libusb_control_transfer(hndl, 0x40, 53, 0, 0, NULL, 0, 0);
-    libusb_release_interface(hndl, 0);
-    return 1;
-}
-
-static void init_usb(struct usb_context* uctx, uint16_t vid, uint16_t pid) {
-    libusb_device** devs;
-    libusb_device* tgt = NULL;
-    int cnt;
-    uint8_t port, bus;
-    int setup_required = 1;
-    libusb_init(NULL);
-    libusb_set_debug(NULL, 3);
-    cnt = libusb_get_device_list(NULL, &devs);
-    if (cnt < 0) {
-        slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
-        exit(1);
-    }
-    while (cnt > 0 && NULL == tgt) {
-        struct libusb_device_descriptor desc;
-        cnt -= 1;
-        if (libusb_get_device_descriptor(devs[cnt], &desc) != 0) {
-            slog(LOG_WARNING, "USB: failed to get device descriptor");
-        } else if (desc.idVendor == USB_ACCESSORY_VID
-                   && (desc.idProduct & USB_ACCESSORY_PID_MASK) == USB_ACCESSORY_PID) {
-            tgt = devs[cnt];
-            setup_required = 0;
-        } else if (0 == vid || (desc.idVendor == vid && desc.idProduct == pid)) {
-            if (try_setup_accessory(devs[cnt])) {
-                tgt = devs[cnt];
-            }
-        }
-    }
-    if (NULL == tgt) {
-        slog(LOG_ERR, "USB: failed to setup accessory mode on any device");
-        exit(1);
-    }
-    if (setup_required) {
-        port = libusb_get_port_number(tgt);
-        bus = libusb_get_bus_number(tgt);
-        slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", port, bus);
-        libusb_free_device_list(devs, 1);
-        sleep(5);
-        cnt = libusb_get_device_list(NULL, &devs);
-        if (cnt < 0) {
-            slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
-            exit(1);
-        }
-        cnt -= 1;
-        while (cnt >= 0 && (libusb_get_bus_number(devs[cnt]) != bus
-                            || libusb_get_port_number(devs[cnt]) != port)) {
-            cnt -= 1;
-        }
-        if (cnt < 0) {
-            slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
-            exit(1);
-        }
-    }
-    slog(LOG_NOTICE, "USB: accessory mode setup success");
-    int res = libusb_open(devs[cnt], &uctx->hndl);
-    libusb_free_device_list(devs, 1);
-    
-    if (res < 0) {
-        slog(LOG_ERR, "USB: failed to open : %s", libusb_strerror(res));
-        return;
-    }
-    res = libusb_claim_interface(uctx->hndl, 0);
-    if (res < 0) {
-        slog(LOG_ERR, "USB: failed to claim interface : %s", libusb_strerror(res));
-        libusb_close(uctx->hndl);
-        return;
-    }
-}
-
-static int usb_write(struct context* ctx, char* data, int size) {
-    int sent = 0;
-    while (size > 0) { 
-        int response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_OUT_ENDPOINT, data
-                                            , size, &sent, USB_XFER_TIMEO_MSEC);
-        if (response != 0) {
-            slog(LOG_ERR, "USB transfer failed: %s", libusb_strerror(response));
-            return 0;
-        }
-        size -= sent;
-        data += sent;
-    }
-    return 1;
-}
-
-static int usb_img_writer(struct context* ctx, int x, int y, int width, int height
-                      , char* data, int size) {
-    char* header = fill_imagecmd_header(data, width, height, x, y);
-    size += 17;
-    return usb_write(ctx, header, size);
-}
-
-static int usb_pntr_writer(struct context* ctx, int x, int y) {
-    int size = 9;
-    char buf[9];
-    char* data;
-    data[0] = (char)Pointer;
-    ((int*)(data + 1))[0] = htonl(x);
-    ((int*)(data + 1))[1] = htonl(y);
-    return usb_write(ctx, data, size);
-}
-#endif
-
-static void init_bmp_folder(struct bmp_context* bctx, char* path) {
-    bctx->num = 0;
-    bctx->path = path;
-    bctx->fname = malloc(BMP_FNAME_BUF_SIZE);
-    bctx->head.bfType = 0x4D42;
-    bctx->head.bfOffBits = sizeof(struct bm_head) + sizeof(struct bm_info_head);
-    bctx->head.bfReserved1 = 0;
-    bctx->head.bfReserved2 = 0;
-    
-    bctx->ihead.biSize = sizeof(struct bm_info_head);
-    bctx->ihead.biPlanes = 1;
-    bctx->ihead.biBitCount = 24;
-    bctx->ihead.biCompression = 0;
-    bctx->ihead.biXPelsPerMeter = 0;
-    bctx->ihead.biYPelsPerMeter = 0;
-    bctx->ihead.biClrUsed = 0;
-    bctx->ihead.biClrImportant = 0;
-}
 
 static void init_socket(struct sock_context* sctx, uint16_t port) {
     struct sockaddr_in addr;
@@ -486,7 +255,7 @@ int main(int argc, char* argv[]) {
             }
             init_socket(&context.w.sctx, (uint16_t)_port);
             context.image_write = sock_img_writer;
-            context.pointer_write = sock_pntr_writer;
+            context.pointer_write = dummy_pointer_writer;
             break;
         case 'p':
             len = strlen(optarg);
@@ -498,8 +267,7 @@ int main(int argc, char* argv[]) {
             }
             path = malloc(len + 1);
             strncpy(path, optarg, len);
-            init_bmp_folder(&context.w.bctx, path);
-            context.image_write = bmp_img_writer;
+            init_bmp(&context, path);
             break;
 #if WITH_USB
         case 'u':
@@ -513,12 +281,10 @@ int main(int argc, char* argv[]) {
                 uint16_t vid, pid;
                 vid = strtol(optarg, NULL, 16);
                 pid = strtol(ppid, NULL, 16);
-                init_usb(&context.w.uctx, vid, pid);
+                init_usb(&context, vid, pid);
             } else {
-                init_usb(&context.w.uctx, 0, 0);
+                init_usb(&context, 0, 0);
             }
-            context.image_write = usb_img_writer;
-            context.pointer_write = usb_pntr_writer;
             break;
 #endif /*WITH_USB*/
         default:

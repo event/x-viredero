@@ -25,6 +25,7 @@
 #if WITH_USB
 #include <libusb-1.0/libusb.h>
 #endif
+
 enum CommandType {
     Init,
     InitReply,
@@ -33,6 +34,7 @@ enum CommandType {
     SceneChange,
     ReCenter
 };
+
 #define IMAGECMD_HEAD_LEN 17
 
 #define DEFAULT_PORT 1242
@@ -95,4 +97,13 @@ struct context {
     int (*recenter)(struct context*, int, int, int, int, char*, int);
 };
 
+
+void slog(int, char*, ...);
+char* fill_imagecmd_header(char*, int, int, int, int);
+#if WITH_USB
+void init_usb(struct context*, uint16_t, uint16_t);
+#endif
+int dummy_pointer_writer(struct context*, int, int);
+void init_bmp(struct context*, char*);
+    
 #endif //__X_VIREDERO_H__
