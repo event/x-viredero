@@ -32,7 +32,25 @@ enum CommandType {
     Image,
     Pointer,
     SceneChange,
-    ReCenter
+    ReCenter,
+};
+
+enum CommandResultCode {
+    ResultSuccess,
+    ErrorBadMessage,
+    ErrorVersion,
+    ErrorScreenFormatNotSupported,
+    ErrorPointerFormatNotSupported,
+};
+
+enum ScreenFormat { // bit masks
+    SF_RGB = 0x1,
+    SF_PNG = 0x2,
+};
+
+enum PointerFormat { //bit masks
+    PF_RGBA = 0x1,
+    PF_PNG = 0x2,
 };
 
 #define IMAGECMD_HEAD_LEN 17
@@ -90,7 +108,8 @@ struct context {
         struct bmp_context bctx;
         struct usb_context uctx;
     } w;
-    int (*init)(struct context*, int, int, int, int, char*, int);
+    int (*receive_init)(struct context*, char*, int);
+    int (*send_reply)(struct context*, char*, int);
     int (*image_write)(struct context*, int, int, int, int, char*, int);
     int (*pointer_write)(struct context*, int, int);
     int (*scene_change)(struct context*, int, int, int, int, char*, int);

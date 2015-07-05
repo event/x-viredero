@@ -39,7 +39,9 @@
 #define USB_ACCESSORY_VID 0x18D1
 #define USB_ACCESSORY_PID_MASK 0xFFF0
 #define USB_ACCESSORY_PID 0x2D00
-#define BLK_OUT_ENDPOINT 2
+
+#define BLK_OUT_ENDPOINT 0x02
+#define BLK_IN_ENDPOINT 0x81
 
 static int xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
     int res = libusb_control_transfer(hndl, 0x40, 52, 0, wIdx
@@ -58,12 +60,12 @@ static int try_setup_accessory(libusb_device* dev) {
     int res;
     res = libusb_open(dev, &hndl);
     if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to open : %s", libusb_strerror(res));
+        slog(LOG_DEBUG, "USB: failed to open: %s", libusb_strerror(res));
         return 0;
     }
     res = libusb_claim_interface(hndl, 0);
     if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to claim interface : %s", libusb_strerror(res));
+        slog(LOG_DEBUG, "USB: failed to claim interface: %s", libusb_strerror(res));
         libusb_close(hndl);
         return 0;
     }
@@ -128,6 +130,26 @@ static int usb_pntr_writer(struct context* ctx, int x, int y) {
     return usb_write(ctx, data, size);
 }
 
+static int usb_receive_init(struct context* ctx, char* buf, int size) {
+    char* p = buf; 
+    int received = 0;
+    int response = LIBUSB_ERROR_TIMEOUT;
+    while (size > 0 && (LIBUSB_ERROR_TIMEOUT == response || 0 == response)) {
+        int t = 0;
+        response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, p
+                                        , size, &t
+                                        , USB_XFER_TIMEO_MSEC * 30);
+        p += t;
+        size -= t;
+    }
+    if (response != 0) {
+        slog(LOG_ERR, "USB: didn't get Init cmd: %s", libusb_strerror(response));
+        return 0;
+    }
+    return 1;
+}
+
+
 void init_usb(struct context* ctx, uint16_t vid, uint16_t pid) {
     struct usb_context* uctx = &ctx->w.uctx;
     libusb_device** devs;
@@ -187,17 +209,18 @@ void init_usb(struct context* ctx, uint16_t vid, uint16_t pid) {
     libusb_free_device_list(devs, 1);
     
     if (res < 0) {
-        slog(LOG_ERR, "USB: failed to open : %s", libusb_strerror(res));
+        slog(LOG_ERR, "USB: failed to open: %s", libusb_strerror(res));
         return;
     }
     res = libusb_claim_interface(uctx->hndl, 0);
     if (res < 0) {
-        slog(LOG_ERR, "USB: failed to claim interface : %s", libusb_strerror(res));
+        slog(LOG_ERR, "USB: failed to claim interface: %s", libusb_strerror(res));
         libusb_close(uctx->hndl);
         return;
     }
     ctx->image_write = usb_img_writer;
     ctx->pointer_write = usb_pntr_writer;
+    ctx->receive_init = usb_receive_init;
+    ctx->send_reply = usb_write;
 }
-
 

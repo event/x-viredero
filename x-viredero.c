@@ -37,6 +37,8 @@
 #define SLEEP_TIME_MSEC 50
 #define DISP_NAME_MAXLEN 64
 #define DATA_BUFFER_HEAD 32
+#define INIT_CMD_LEN 4
+#define MAX_VIREDERO_PROT_VERSION 1
 
 static int max_log_level = 8;
 
@@ -162,10 +164,51 @@ static void daemonize() {
     }
 }
 
+static void send_error_reply(struct context* ctx, enum CommandResultCode error) {
+    char buf[2];
+    buf[0] = InitReply;
+    buf[1] = error;
+    ctx->send_reply(ctx, buf, 2);
+ }
+
+static int handshake(struct context* ctx) {
+    char buf[INIT_CMD_LEN];
+    char version;
+    
+    if (! ctx->receive_init(ctx, buf, INIT_CMD_LEN)) {
+        return 0;
+    }
+
+    if (buf[0] != 0) {
+        send_error_reply(ctx, ErrorBadMessage);
+        return 0;
+    }
+
+    if (version > MAX_VIREDERO_PROT_VERSION) {
+        send_error_reply(ctx, ErrorVersion);
+        return 0;
+    }
+    
+    if ((buf[1] & SF_RGB) == 0) {
+        send_error_reply(ctx, ErrorScreenFormatNotSupported);
+        return 0;
+    }
+
+    if ((buf[2] & PF_RGBA) == 0) {
+        send_error_reply(ctx, ErrorPointerFormatNotSupported);
+        return 0;
+    }
+    buf[0] = InitReply;
+    buf[1] = ResultSuccess;
+    buf[2] = SF_RGB;
+    buf[3] = PF_RGBA;
+    ctx->send_reply(ctx, buf, 4);
+}
+
 static struct context context;
 
 int main(int argc, char* argv[]) {
-    char* disp_name;
+    char* disp_name = ":0";
     char* path;
     uint16_t port = DEFAULT_PORT;
     XEvent event;
@@ -243,7 +286,13 @@ int main(int argc, char* argv[]) {
     }
     slog(LOG_DEBUG, "%s up and running", PROG);
 
+    if (!handshake(&context)) {
+        slog(LOG_ERR, "handshake failed. Aborting...");
+        exit(1);
+    }
+    slog(LOG_NOTICE, "handshake success");
     setup_display(disp_name, &context);
+    slog(LOG_NOTICE, "display setup success");
     while (! context.fin) {
         while (XPending(context.display) > 0) {
             XNextEvent(context.display, &event);
