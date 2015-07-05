@@ -105,5 +105,6 @@ void init_usb(struct context*, uint16_t, uint16_t);
 #endif
 int dummy_pointer_writer(struct context*, int, int);
 void init_bmp(struct context*, char*);
-    
+void init_socket(struct context*, uint16_t);
+
 #endif //__X_VIREDERO_H__
