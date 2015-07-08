@@ -29,7 +29,8 @@
 #include "x-viredero.h"
 
 static int sock_img_writer(struct context* ctx, int x, int y, int width, int height
-                       , char* data, int size) {
+                       , char* data) {
+    int size = width * height * 3;
     int fd = ctx->w.sctx.sock;
     if (0 == fd) {
         fd = accept(ctx->w.sctx.listen_sock, NULL, NULL);

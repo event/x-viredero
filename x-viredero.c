@@ -73,9 +73,9 @@ static void zpixmap2rgb(char* data, unsigned long len) {
     uint32_t* src = (uint32_t*)data;
     uint32_t* end = src + len;
     while (src < end) {
-        char green = (src[0] >> 16) & 0xFF;
-        char blue = (src[0] >> 8) & 0xFF;
-        char red = src[0] & 0xFF;
+        char green = (char)((src[0] >> 16) & 0xFF);
+        char blue = (char)((src[0] >> 8) & 0xFF);
+        char red = (char)(src[0] & 0xFF);
         data[0] = red;
         data[1] = green;
         data[2] = blue;
@@ -98,7 +98,7 @@ static void cursor2rgba(unsigned long* cur_data, char* rgba_data, unsigned long 
 }
 
 int dummy_pointer_writer(struct context* ctx, int x, int y
-                         , char* pointer, int width, int height) {
+                         , int width, int height, char* pointer) {
     return 1;
 }
 
@@ -112,8 +112,7 @@ static int output_damage(struct context* ctx, int x, int y, int width, int heigh
         return 0;
     }
     zpixmap2rgb(ctx->shmimage->data, width * height);
-    ctx->image_write(ctx, x, y, width, height, ctx->shmimage->data
-                     , width * height * 3);
+    ctx->image_write(ctx, x, y, width, height, ctx->shmimage->data);
     return 1;
 }
 
@@ -123,10 +122,10 @@ static int output_pointer(struct context* ctx) {
         char* data = ctx->cursor_buffer + 18;
         cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
         ctx->pointer_write(ctx, cursor->x, cursor->y
-                           , data, cursor->width, cursor->height);
+                           , cursor->width, cursor->height, data);
         ctx->cursor_serial = cursor->cursor_serial;
     } else if (cursor->x != ctx->cursor_x || cursor->y != ctx->cursor_y) {
-        ctx->pointer_write(ctx, cursor->x, cursor->y, NULL, 0, 0);
+        ctx->pointer_write(ctx, cursor->x, cursor->y, 0, 0, NULL);
     }                    
 //    slog(LOG_DEBUG, "pointer is @%dx%d", cursor->x, cursor->y);
     return 1;
@@ -170,6 +169,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
     ctx->shmimage = XShmCreateImage(
         display, DefaultVisual(display, scr), DefaultDepth(display, scr)
         , ZPixmap, NULL, &ctx->shminfo, attrib.width, attrib.height);
+
     ctx->shminfo.shmid = shmget(
         IPC_PRIVATE
         , DATA_BUFFER_HEAD + ctx->shmimage->bytes_per_line * ctx->shmimage->height
@@ -179,9 +179,9 @@ static int setup_display(const char * display_name, struct context* ctx) {
         return 0; 
     }
  
-    ctx->shminfo.shmaddr = shmat(ctx->shminfo.shmid, 0, 0) + DATA_BUFFER_HEAD;
+    ctx->shminfo.shmaddr = shmat(ctx->shminfo.shmid, 0, 0);
     ctx->shminfo.readOnly = False;
-    ctx->shmimage->data = ctx->shminfo.shmaddr;
+    ctx->shmimage->data = ctx->shminfo.shmaddr + DATA_BUFFER_HEAD;
     if (!XShmAttach(display, &ctx->shminfo)) {
         slog(LOG_ERR, "Failed to attach shared memory!");
         return 0;
@@ -296,7 +296,7 @@ int main(int argc, char* argv[]) {
             }
             path = malloc(len + 1);
             strncpy(path, optarg, len);
-            init_bmp(&context, path);
+            init_ppm(&context, path);
             break;
 #if WITH_USB
         case 'u':

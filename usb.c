@@ -113,15 +113,18 @@ static int usb_write(struct context* ctx, char* data, int size) {
     return 1;
 }
 
+static int i = 0;
 static int usb_img_writer(struct context* ctx, int x, int y, int width, int height
-                      , char* data, int size) {
+                      , char* data) {
     char* header = fill_imagecmd_header(data, width, height, x, y);
-    size += 17;
+    int size = (width * height * 3) + IMAGECMD_HEAD_LEN;
+    slog(LOG_DEBUG, "!!! %d %d %d %d %d %d", i, width, height, x, y, size - IMAGECMD_HEAD_LEN);
+    i += 1;
     return usb_write(ctx, header, size);
 }
 
 static int usb_pntr_writer(struct context* ctx, int x, int y
-                           , char* pointer, int width, int height) {
+                           , int width, int height, char* pointer) {
     int size = 10;
     char buf[10];
     char* data;
