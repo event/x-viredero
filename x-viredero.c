@@ -30,6 +30,7 @@
 #include <X11/Xlibint.h>
 #include <X11/extensions/Xdamage.h>
 #include <X11/extensions/XShm.h>
+#include <X11/extensions/Xfixes.h>
 
 #include "x-viredero.h"
 
@@ -39,6 +40,7 @@
 #define DATA_BUFFER_HEAD 32
 #define INIT_CMD_LEN 4
 #define MAX_VIREDERO_PROT_VERSION 1
+#define CURSOR_BUFFER_SIZE (4 * 32 * 32 + 18)
 
 static int max_log_level = 8;
 
@@ -66,27 +68,41 @@ char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
     return header;
 }
 
-static void zpixmap2rgb(char* data, unsigned long len
-                        , char roff, char goff, char boff) {
+static void zpixmap2rgb(char* data, unsigned long len) {
+    //pixmap is in agbr format
     uint32_t* src = (uint32_t*)data;
     uint32_t* end = src + len;
     while (src < end) {
-        char red = (src[0] >> roff) & 0xFF;
-        char green = (src[0] >> goff) & 0xFF;
-        char blue = (src[0] >> boff) & 0xFF;
-        data[0] = blue;
-        data[1] = red;
-        data[2] = green;
+        char green = (src[0] >> 16) & 0xFF;
+        char blue = (src[0] >> 8) & 0xFF;
+        char red = src[0] & 0xFF;
+        data[0] = red;
+        data[1] = green;
+        data[2] = blue;
         data += 3;
         src += 1;
     }
 }
 
-int dummy_pointer_writer(struct context* ctx, int x, int y) {
+static void cursor2rgba(unsigned long* cur_data, char* rgba_data, unsigned long len) {
+// cursor is in argb format
+    int cur_idx = len/4;
+    while (len > 0) {
+        len -= 4;
+        cur_idx -= 1;
+        rgba_data[len + 3] = (cur_data[cur_idx] >> 24) & 0xFF;
+        rgba_data[len + 0] = (cur_data[cur_idx] >> 16) & 0xFF;
+        rgba_data[len + 1] = (cur_data[cur_idx] >>  8) & 0xFF;
+        rgba_data[len + 2] = (cur_data[cur_idx]) & 0xFF;
+    }
+}
+
+int dummy_pointer_writer(struct context* ctx, int x, int y
+                         , char* pointer, int width, int height) {
     return 1;
 }
 
-int output_damage(struct context* ctx, int x, int y, int width, int height) {
+static int output_damage(struct context* ctx, int x, int y, int width, int height) {
 //    slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
     ctx->shmimage->width = width;
     ctx->shmimage->height = height;
@@ -95,15 +111,30 @@ int output_damage(struct context* ctx, int x, int y, int width, int height) {
         slog(LOG_ERR, "unabled to get the image\n");
         return 0;
     }
-    zpixmap2rgb(ctx->shmimage->data, width * height, 16, 8, 0);
+    zpixmap2rgb(ctx->shmimage->data, width * height);
     ctx->image_write(ctx, x, y, width, height, ctx->shmimage->data
                      , width * height * 3);
     return 1;
 }
 
+static int output_pointer(struct context* ctx) {
+    XFixesCursorImage* cursor = XFixesGetCursorImage(ctx->display);
+    if (cursor->cursor_serial != ctx->cursor_serial) {
+        char* data = ctx->cursor_buffer + 18;
+        cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
+        ctx->pointer_write(ctx, cursor->x, cursor->y
+                           , data, cursor->width, cursor->height);
+        ctx->cursor_serial = cursor->cursor_serial;
+    } else if (cursor->x != ctx->cursor_x || cursor->y != ctx->cursor_y) {
+        ctx->pointer_write(ctx, cursor->x, cursor->y, NULL, 0, 0);
+    }                    
+//    slog(LOG_DEBUG, "pointer is @%dx%d", cursor->x, cursor->y);
+    return 1;
+}
 
 static int setup_display(const char * display_name, struct context* ctx) {
-    Display * display = XOpenDisplay(display_name);
+    Display* display = XOpenDisplay(display_name);
+    int t;
     if (!display) {
         slog(LOG_ERR, "unable to open display '%s'\n"
              , display_name);
@@ -120,6 +151,10 @@ static int setup_display(const char * display_name, struct context* ctx) {
     }
     if (!XShmQueryExtension(display)) {
         slog(LOG_ERR, "backend does not have XShm extension\n");
+        return 0;
+    }
+    if (!XFixesQueryExtension(display, &t, &t)) {
+        slog(LOG_ERR, "backend does not have XFixes extension\n");
         return 0;
     }
     XDamageCreate(display, root, XDamageReportRawRectangles);
@@ -151,7 +186,12 @@ static int setup_display(const char * display_name, struct context* ctx) {
         slog(LOG_ERR, "Failed to attach shared memory!");
         return 0;
     }
- 
+
+    ctx->cursor_buffer = (char*)malloc(CURSOR_BUFFER_SIZE);
+    ctx->cursor_serial = -1;
+    ctx->cursor_x = 0;
+    ctx->cursor_y = 0;
+    
     ctx->display = display;
     ctx->root = root;
     return 1;
@@ -206,7 +246,8 @@ static int handshake(struct context* ctx) {
 }
 
 static struct context context;
-
+static char cursor_buf[18 + 256 * 4];
+static int cursor_sent = 0;
 int main(int argc, char* argv[]) {
     char* disp_name = ":0";
     char* path;
@@ -217,6 +258,7 @@ int main(int argc, char* argv[]) {
     int ssock;
     int len;
     long int _port;
+    int i;
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
     while ((c = getopt (argc, argv, "hdD:l:p:u::")) != -1) {
         switch (c)
@@ -285,14 +327,19 @@ int main(int argc, char* argv[]) {
         daemonize();
     }
     slog(LOG_DEBUG, "%s up and running", PROG);
-
-    if (!handshake(&context)) {
-        slog(LOG_ERR, "handshake failed. Aborting...");
-        exit(1);
+    if (context.receive_init) {
+        if (!handshake(&context)) {
+            slog(LOG_ERR, "handshake failed. Aborting...");
+            exit(1);
+        }
     }
     slog(LOG_NOTICE, "handshake success");
     setup_display(disp_name, &context);
     slog(LOG_NOTICE, "display setup success");
+    // init cursor
+    for (i = 0; i < 256; i += 1) {
+        ((int *)(cursor_buf + 18))[i] = 0xFFFFFF00;
+    }
     while (! context.fin) {
         while (XPending(context.display) > 0) {
             XNextEvent(context.display, &event);
@@ -303,11 +350,7 @@ int main(int argc, char* argv[]) {
                         &context, de->area.x, de->area.y
                         , de->area.width, de->area.height);
                 }
-                /* int x, y, t; */
-                /* Window w; */
-                /* XQueryPointer(context.display, context.root, &w, &w, &x, &y */
-                /*               , &t, &t, &t); */
-                /* context.pointer_write(&context, x, y); */
+                output_pointer(&context);
             }
         }
         usleep(SLEEP_TIME_MSEC);

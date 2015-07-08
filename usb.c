@@ -120,10 +120,22 @@ static int usb_img_writer(struct context* ctx, int x, int y, int width, int heig
     return usb_write(ctx, header, size);
 }
 
-static int usb_pntr_writer(struct context* ctx, int x, int y) {
-    int size = 9;
-    char buf[9];
+static int usb_pntr_writer(struct context* ctx, int x, int y
+                           , char* pointer, int width, int height) {
+    int size = 10;
+    char buf[10];
     char* data;
+    if (pointer != NULL) {
+        data = pointer - 9;
+        data[0] = 1;
+        ((int*)(data + 1))[0] = htonl(width);
+        ((int*)(data + 1))[1] = htonl(height);
+        data -= 9;
+        size = 18 + width * height * 4;
+    } else {
+        data = buf;
+        data[10] = 0; // no pointer data
+    }
     data[0] = (char)Pointer;
     ((int*)(data + 1))[0] = htonl(x);
     ((int*)(data + 1))[1] = htonl(y);

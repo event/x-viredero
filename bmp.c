@@ -65,6 +65,20 @@ static int bmp_img_writer(struct context* ctx, int x, int y, int width, int heig
     bctx->num += 1;
 }
 
+static int bmp_pointer_writer(struct context* ctx, int x, int y
+                              , char* pointer, int width, int height) {
+    fprintf(stderr, "----\n%dx%d %d %d\n", x, y, width, height);
+    for (y = 0; y < height; y += 1) {
+        for (x = 0; x < width*4; x += 4) {
+            int base = y * width * 4 + x;
+            fprintf(stderr, "%3hhu %3hhu %3hhu  ", pointer[base + 0], pointer[base + 1]
+                    , pointer[base + 2]);
+        }
+        fprintf(stderr, "\n");
+    }
+    return 1;
+}
+
 void init_bmp(struct context* ctx, char* path) {
     struct bmp_context* bctx = &ctx->w.bctx;
     bctx->num = 0;
@@ -84,7 +98,7 @@ void init_bmp(struct context* ctx, char* path) {
     bctx->ihead.biClrUsed = 0;
     bctx->ihead.biClrImportant = 0;
     ctx->image_write = bmp_img_writer;
-    ctx->pointer_write = dummy_pointer_writer;
+    ctx->pointer_write = bmp_pointer_writer;
 }
 
 

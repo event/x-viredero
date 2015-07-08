@@ -103,6 +103,10 @@ struct context {
     XImage* shmimage;
     int damage;
     int fin;
+    char* cursor_buffer;
+    long cursor_serial;
+    short cursor_x;
+    short cursor_y;
     union writer_cfg{
         struct sock_context sctx;
         struct bmp_context bctx;
@@ -111,7 +115,7 @@ struct context {
     int (*receive_init)(struct context*, char*, int);
     int (*send_reply)(struct context*, char*, int);
     int (*image_write)(struct context*, int, int, int, int, char*, int);
-    int (*pointer_write)(struct context*, int, int);
+    int (*pointer_write)(struct context*, int, int, char*, int, int);
     int (*scene_change)(struct context*, int, int, int, int, char*, int);
     int (*recenter)(struct context*, int, int, int, int, char*, int);
 };
@@ -122,7 +126,7 @@ char* fill_imagecmd_header(char*, int, int, int, int);
 #if WITH_USB
 void init_usb(struct context*, uint16_t, uint16_t);
 #endif
-int dummy_pointer_writer(struct context*, int, int);
+int dummy_pointer_writer(struct context*, int, int, char*, int, int);
 void init_bmp(struct context*, char*);
 void init_socket(struct context*, uint16_t);
 
