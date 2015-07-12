@@ -209,7 +209,7 @@ static void send_error_reply(struct context* ctx, enum CommandResultCode error) 
     buf[0] = InitReply;
     buf[1] = error;
     ctx->send_reply(ctx, buf, 2);
- }
+}
 
 static int handshake(struct context* ctx) {
     char buf[INIT_CMD_LEN];
@@ -246,8 +246,6 @@ static int handshake(struct context* ctx) {
 }
 
 static struct context context;
-static char cursor_buf[18 + 256 * 4];
-static int cursor_sent = 0;
 int main(int argc, char* argv[]) {
     char* disp_name = ":0";
     char* path;
@@ -336,10 +334,6 @@ int main(int argc, char* argv[]) {
     slog(LOG_NOTICE, "handshake success");
     setup_display(disp_name, &context);
     slog(LOG_NOTICE, "display setup success");
-    // init cursor
-    for (i = 0; i < 256; i += 1) {
-        ((int *)(cursor_buf + 18))[i] = 0xFFFFFF00;
-    }
     while (! context.fin) {
         while (XPending(context.display) > 0) {
             XNextEvent(context.display, &event);
