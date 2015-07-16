@@ -125,19 +125,19 @@ static int usb_img_writer(struct context* ctx, int x, int y, int width, int heig
 
 static int usb_pntr_writer(struct context* ctx, int x, int y
                            , int width, int height, char* pointer) {
-    int size = 10;
-    char buf[10];
+    int size;
     char* data;
-    if (pointer != NULL) {
+    if (width > 0) {
         data = pointer - 9;
         data[0] = 1;
         ((int*)(data + 1))[0] = htonl(width);
         ((int*)(data + 1))[1] = htonl(height);
         data -= 9;
-        size = 18 + width * height * 4;
+        size = POINTERCMD_HEAD_LEN + width * height * 4;
     } else {
-        data = buf;
-        data[10] = 0; // no pointer data
+        data = pointer;
+        data[9] = 0; // no pointer data
+        size = 10;
     }
     data[0] = (char)Pointer;
     ((int*)(data + 1))[0] = htonl(x);
