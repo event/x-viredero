@@ -246,7 +246,14 @@ static int handshake(struct context* ctx) {
     ctx->send_reply(ctx, buf, 4);
 }
 
+static long now() {
+    struct timespec tp;
+    clock_gettime(CLOCK_MONOTONIC, &tp);
+    return tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+}
+
 static struct context context;
+
 int main(int argc, char* argv[]) {
     char* disp_name = ":0";
     char* path;
@@ -338,9 +345,7 @@ int main(int argc, char* argv[]) {
     oldy = 0;
     while (! context.fin) {
         struct timespec tp;
-        long millis;
-        clock_gettime(CLOCK_MONOTONIC, &tp);
-        millis = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+        long millis = now();
         if (millis - oldmillis > POINTER_CHECK_INTERVAL_MSEC) {
             int junk, x, y;
             Window junkw;
@@ -352,7 +357,7 @@ int main(int argc, char* argv[]) {
             }
             oldmillis = millis;
         }
-        while (XPending(context.display) > 0) {
+        while (XPending(context.display) > 0 && millis - oldmillis < POINTER_CHECK_INTERVAL_MSEC) {
             XEvent event;
             XNextEvent(context.display, &event);
             if (context.cursor_evt_base + XFixesCursorNotify == event.type) {
@@ -365,6 +370,7 @@ int main(int argc, char* argv[]) {
                         , de->area.width, de->area.height);
                 }
             }
+            millis = now();
         }
     }
 }
