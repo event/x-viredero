@@ -54,6 +54,7 @@ enum PointerFormat { //bit masks
 };
 
 #define IMAGECMD_HEAD_LEN 17
+#define POINTERCMD_HEAD_LEN 18
 
 #define DEFAULT_PORT 1242
 
@@ -77,10 +78,10 @@ struct context {
     Window root;
     XShmSegmentInfo shminfo;
     XImage* shmimage;
-    int damage;
+    int damage_evt_base;
+    int cursor_evt_base;
     int fin;
     char* cursor_buffer;
-    long cursor_serial;
     short cursor_x;
     short cursor_y;
     union writer_cfg{

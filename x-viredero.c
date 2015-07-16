@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <time.h>
 #include <syslog.h>
 
 #include <sys/shm.h>
@@ -35,12 +36,13 @@
 #include "x-viredero.h"
 
 #define PROG "x-viredero"
-#define SLEEP_TIME_MSEC 50
 #define DISP_NAME_MAXLEN 64
 #define DATA_BUFFER_HEAD 32
 #define INIT_CMD_LEN 4
 #define MAX_VIREDERO_PROT_VERSION 1
-#define CURSOR_BUFFER_SIZE (4 * 32 * 32 + 18)
+#define CURSOR_MAX_SIZE 64
+#define CURSOR_BUFFER_SIZE (4 * CURSOR_MAX_SIZE * CURSOR_MAX_SIZE + POINTERCMD_HEAD_LEN)
+#define POINTER_CHECK_INTERVAL_MSEC 50
 
 static int max_log_level = 8;
 
@@ -116,18 +118,17 @@ static int output_damage(struct context* ctx, int x, int y, int width, int heigh
     return 1;
 }
 
-static int output_pointer(struct context* ctx) {
+static int output_pointer_image(struct context* ctx) {
     XFixesCursorImage* cursor = XFixesGetCursorImage(ctx->display);
-    if (cursor->cursor_serial != ctx->cursor_serial) {
-        char* data = ctx->cursor_buffer + 18;
-        cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
-        ctx->pointer_write(ctx, cursor->x, cursor->y
-                           , cursor->width, cursor->height, data);
-        ctx->cursor_serial = cursor->cursor_serial;
-    } else if (cursor->x != ctx->cursor_x || cursor->y != ctx->cursor_y) {
-        ctx->pointer_write(ctx, cursor->x, cursor->y, 0, 0, NULL);
-    }                    
-//    slog(LOG_DEBUG, "pointer is @%dx%d", cursor->x, cursor->y);
+    char* data = ctx->cursor_buffer + POINTERCMD_HEAD_LEN; // leave some head space for cmd header
+    cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
+    ctx->pointer_write(ctx, cursor->x, cursor->y
+                       , cursor->width, cursor->height, data);
+    return 1;
+}
+
+static int output_pointer_coords(struct context* ctx, int x, int y) {
+    ctx->pointer_write(ctx, x, y, 0, 0, ctx->cursor_buffer);
     return 1;
 }
 
@@ -143,8 +144,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
 
     Window root = DefaultRootWindow(display);
 
-    int damage_error;
-    if (!XDamageQueryExtension (display, &ctx->damage, &damage_error)) {
+    if (!XDamageQueryExtension (display, &ctx->damage_evt_base, &t)) {
         slog(LOG_ERR, "backend does not have Xdamage extension\n");
         return 0;
     }
@@ -152,10 +152,12 @@ static int setup_display(const char * display_name, struct context* ctx) {
         slog(LOG_ERR, "backend does not have XShm extension\n");
         return 0;
     }
-    if (!XFixesQueryExtension(display, &t, &t)) {
+    if (!XFixesQueryExtension(display, &ctx->cursor_evt_base, &t)) {
         slog(LOG_ERR, "backend does not have XFixes extension\n");
         return 0;
     }
+    XFixesSelectCursorInput(display, root,
+                            XFixesDisplayCursorNotifyMask);
     XDamageCreate(display, root, XDamageReportRawRectangles);
     XWindowAttributes attrib;
     XGetWindowAttributes(display, root, &attrib);
@@ -188,7 +190,6 @@ static int setup_display(const char * display_name, struct context* ctx) {
     }
 
     ctx->cursor_buffer = (char*)malloc(CURSOR_BUFFER_SIZE);
-    ctx->cursor_serial = -1;
     ctx->cursor_x = 0;
     ctx->cursor_y = 0;
     
@@ -249,14 +250,12 @@ static struct context context;
 int main(int argc, char* argv[]) {
     char* disp_name = ":0";
     char* path;
-    uint16_t port = DEFAULT_PORT;
-    XEvent event;
     int c;
     int debug = 0;
-    int ssock;
     int len;
-    long int _port;
-    int i;
+    long int port;
+    int i, oldx, oldy;
+    long oldmillis = 0;
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
     while ((c = getopt (argc, argv, "hdD:l:p:u::")) != -1) {
         switch (c)
@@ -276,13 +275,13 @@ int main(int argc, char* argv[]) {
             strncpy(disp_name, optarg, len);
             break;
         case 'l':
-            _port = strtol(optarg, NULL, 10);
-            if (_port < 1 || port > 65535) {
+            port = strtol(optarg, NULL, 10);
+            if (port < 1 || port > 65535) {
                 fprintf(stderr, "Port %s is not in range."
                         " Will use default port %d\n", optarg, DEFAULT_PORT);
-                _port = DEFAULT_PORT;
+                port = DEFAULT_PORT;
             }
-            init_socket(&context, (uint16_t)_port);
+            init_socket(&context, (uint16_t)port);
             break;
         case 'p':
             len = strlen(optarg);
@@ -324,30 +323,49 @@ int main(int argc, char* argv[]) {
     if (!debug) {
         daemonize();
     }
-    slog(LOG_DEBUG, "%s up and running", PROG);
+    slog(LOG_NOTICE, "%s up and running", PROG);
     if (context.receive_init) {
         if (!handshake(&context)) {
             slog(LOG_ERR, "handshake failed. Aborting...");
             exit(1);
         }
     }
-    slog(LOG_NOTICE, "handshake success");
+    slog(LOG_INFO, "handshake success");
     setup_display(disp_name, &context);
-    slog(LOG_NOTICE, "display setup success");
+    slog(LOG_DEBUG, "display setup success");
+    output_pointer_image(&context);
+    oldx = 0;
+    oldy = 0;
     while (! context.fin) {
+        struct timespec tp;
+        long millis;
+        clock_gettime(CLOCK_MONOTONIC, &tp);
+        millis = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+        if (millis - oldmillis > POINTER_CHECK_INTERVAL_MSEC) {
+            int junk, x, y;
+            Window junkw;
+            XQueryPointer(context.display, context.root, &junkw, &junkw, &x, &y, &junk, &junk, &junk);
+            if (x != oldx || y != oldy) {
+                output_pointer_coords(&context, x, y);
+                oldx = x;
+                oldy = y;
+            }
+            oldmillis = millis;
+        }
         while (XPending(context.display) > 0) {
+            XEvent event;
             XNextEvent(context.display, &event);
-            if (context.damage + XDamageNotify == event.type) {
-                XDamageNotifyEvent *de = (XDamageNotifyEvent *) &event;
+            if (context.cursor_evt_base + XFixesCursorNotify == event.type) {
+                output_pointer_image(&context);
+            } else if (context.damage_evt_base + XDamageNotify == event.type) {
+                XDamageNotifyEvent* de = (XDamageNotifyEvent*) &event;
                 if (de->drawable == context.root) {
                     output_damage(
                         &context, de->area.x, de->area.y
                         , de->area.width, de->area.height);
                 }
-                output_pointer(&context);
             }
         }
-        usleep(SLEEP_TIME_MSEC);
     }
 }
   
