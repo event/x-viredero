@@ -120,7 +120,7 @@ static int output_damage(struct context* ctx, int x, int y, int width, int heigh
 
 static int output_pointer_image(struct context* ctx) {
     XFixesCursorImage* cursor = XFixesGetCursorImage(ctx->display);
-    char* data = ctx->cursor_buffer + POINTERCMD_HEAD_LEN; // leave some head space for cmd header
+    char* data = ctx->buffer + POINTERCMD_HEAD_LEN; // leave some head space for cmd header
     cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
     ctx->pointer_write(ctx, cursor->x, cursor->y
                        , cursor->width, cursor->height, data);
@@ -128,7 +128,7 @@ static int output_pointer_image(struct context* ctx) {
 }
 
 static int output_pointer_coords(struct context* ctx, int x, int y) {
-    ctx->pointer_write(ctx, x, y, 0, 0, ctx->cursor_buffer);
+    ctx->pointer_write(ctx, x, y, 0, 0, ctx->buffer);
     return 1;
 }
 
@@ -189,7 +189,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
         return 0;
     }
 
-    ctx->cursor_buffer = (char*)malloc(CURSOR_BUFFER_SIZE);
+    ctx->buffer = (char*)malloc(CURSOR_BUFFER_SIZE);
     ctx->cursor_x = 0;
     ctx->cursor_y = 0;
     
@@ -213,13 +213,13 @@ static void send_error_reply(struct context* ctx, enum CommandResultCode error) 
 }
 
 static int handshake(struct context* ctx) {
-    char buf[INIT_CMD_LEN];
+    char* buf = ctx->buffer;
     char version;
+    XWindowAttributes attrib;
     
     if (! ctx->receive_init(ctx, buf, INIT_CMD_LEN)) {
         return 0;
     }
-
     if (buf[0] != 0) {
         send_error_reply(ctx, ErrorBadMessage);
         return 0;
@@ -243,7 +243,10 @@ static int handshake(struct context* ctx) {
     buf[1] = ResultSuccess;
     buf[2] = SF_RGB;
     buf[3] = PF_RGBA;
-    ctx->send_reply(ctx, buf, 4);
+    XGetWindowAttributes(ctx->display, ctx->root, &attrib);
+    ((int*)(buf + 4))[0] = htonl(attrib.width);
+    ((int*)(buf + 4))[1] = htonl(attrib.height);
+    return ctx->send_reply(ctx, buf, 12);
 }
 
 static long now() {
@@ -330,6 +333,7 @@ int main(int argc, char* argv[]) {
     if (!debug) {
         daemonize();
     }
+    setup_display(disp_name, &context);
     slog(LOG_NOTICE, "%s up and running", PROG);
     if (context.receive_init) {
         if (!handshake(&context)) {
@@ -338,8 +342,6 @@ int main(int argc, char* argv[]) {
         }
     }
     slog(LOG_INFO, "handshake success");
-    setup_display(disp_name, &context);
-    slog(LOG_DEBUG, "display setup success");
     output_pointer_image(&context);
     oldx = 0;
     oldy = 0;

@@ -146,15 +146,14 @@ static int usb_pntr_writer(struct context* ctx, int x, int y
 }
 
 static int usb_receive_init(struct context* ctx, char* buf, int size) {
-    char* p = buf; 
     int received = 0;
     int response = LIBUSB_ERROR_TIMEOUT;
     while (size > 0 && (LIBUSB_ERROR_TIMEOUT == response || 0 == response)) {
         int t = 0;
-        response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, p
+        response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, buf
                                         , size, &t
-                                        , USB_XFER_TIMEO_MSEC * 30);
-        p += t;
+                                        , USB_XFER_TIMEO_MSEC * 120);
+        buf += t;
         size -= t;
     }
     if (response != 0) {

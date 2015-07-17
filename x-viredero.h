@@ -26,6 +26,10 @@
 #include <libusb-1.0/libusb.h>
 #endif
 
+#define IMAGECMD_HEAD_LEN 17
+#define POINTERCMD_HEAD_LEN 18
+#define DEFAULT_PORT 1242
+
 enum CommandType {
     Init,
     InitReply,
@@ -53,11 +57,6 @@ enum PointerFormat { //bit masks
     PF_PNG = 0x2,
 };
 
-#define IMAGECMD_HEAD_LEN 17
-#define POINTERCMD_HEAD_LEN 18
-
-#define DEFAULT_PORT 1242
-
 struct ppm_context {
     int num;
     char* path;
@@ -81,7 +80,7 @@ struct context {
     int damage_evt_base;
     int cursor_evt_base;
     int fin;
-    char* cursor_buffer;
+    char* buffer;
     short cursor_x;
     short cursor_y;
     union writer_cfg{
