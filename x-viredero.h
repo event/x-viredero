@@ -102,7 +102,7 @@ char* fill_imagecmd_header(char*, int, int, int, int);
 #if WITH_USB
 void init_usb(struct context*);
 #endif
-int dummy_write_pointerr(struct context*, int, int, int, int, char*);
+int dummy_pointer_writer(struct context*, int, int, int, int, char*);
 void init_ppm(struct context*, char*);
 void init_socket(struct context*, uint16_t);
 
