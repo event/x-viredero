@@ -50,7 +50,7 @@ static int ppm_img_writer(struct context* ctx, int x, int y, int width, int heig
     return 1;
 }
 
-static int ppm_pointer_writer(struct context* ctx, int x, int y
+static int ppm_write_pointerr(struct context* ctx, int x, int y
                               , int width, int height, char* pointer) {
     struct ppm_context* pctx = &ctx->w.pctx;
     FILE *f;
@@ -73,8 +73,8 @@ void init_ppm(struct context* ctx, char* path) {
     pctx->num = 0;
     pctx->path = path;
     pctx->fname = malloc(PPM_FNAME_BUF_SIZE);
-    ctx->image_write = ppm_img_writer;
-    ctx->pointer_write = ppm_img_writer;
+    ctx->write_image = ppm_img_writer;
+    ctx->write_pointer = ppm_img_writer;
 }
 
 

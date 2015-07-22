@@ -88,11 +88,11 @@ struct context {
         struct ppm_context pctx;
         struct usb_context uctx;
     } w;
-    int (*receive_init)(struct context*, char*, int);
+    int (*init_conn)(struct context*, char*, int);
     int (*send_reply)(struct context*, char*, int);
-    int (*image_write)(struct context*, int, int, int, int, char*);
-    int (*pointer_write)(struct context*, int, int, int, int, char*);
-    int (*scene_change)(struct context*);
+    int (*write_image)(struct context*, int, int, int, int, char*);
+    int (*write_pointer)(struct context*, int, int, int, int, char*);
+    int (*change_scene)(struct context*);
     int (*recenter)(struct context*, int, int);
 };
 
@@ -100,9 +100,9 @@ struct context {
 void slog(int, char*, ...);
 char* fill_imagecmd_header(char*, int, int, int, int);
 #if WITH_USB
-void init_usb(struct context*, uint16_t, uint16_t);
+void init_usb(struct context*);
 #endif
-int dummy_pointer_writer(struct context*, int, int, int, int, char*);
+int dummy_write_pointerr(struct context*, int, int, int, int, char*);
 void init_ppm(struct context*, char*);
 void init_socket(struct context*, uint16_t);
 

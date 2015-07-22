@@ -67,7 +67,7 @@ static int handshake(struct context* ctx) {
     char buf[INIT_CMD_LEN];
     char version;
     
-    if (! ctx->receive_init(ctx, buf, INIT_CMD_LEN)) {
+    if (! ctx->init_conn(ctx, buf, INIT_CMD_LEN)) {
         return 0;
     }
 
@@ -108,7 +108,7 @@ int main(int argc, char* argv[]) {
     init_usb(&context, 0, 0);
     
     slog(LOG_DEBUG, "%s up and running", PROG);
-    if (context.receive_init) {
+    if (context.init_conn) {
         if (!handshake(&context)) {
             slog(LOG_ERR, "handshake failed. Aborting...");
             exit(1);
@@ -132,7 +132,7 @@ int main(int argc, char* argv[]) {
         }
         fread(buffer, 1, width * height * 3, ppm);
         
-        context.image_write(&context, 0, 0, width, height, buffer);
+        context.write_image(&context, 0, 0, width, height, buffer);
     }
     globfree(&g);
 }

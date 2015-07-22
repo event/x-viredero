@@ -81,7 +81,7 @@ void init_socket(struct context* ctx, uint16_t port) {
     }
     sctx->listen_sock = sock;
     sctx->sock = 0;
-    ctx->image_write = sock_img_writer;
-    ctx->pointer_write = dummy_pointer_writer;
+    ctx->write_image = sock_img_writer;
+    ctx->write_pointer = dummy_write_pointerr;
 }
 

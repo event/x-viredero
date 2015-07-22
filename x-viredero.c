@@ -115,19 +115,19 @@ static int output_damage(struct context* ctx, int x, int y, int width, int heigh
         return 0;
     }
     zpixmap2rgb(ctx->shmimage->data, width * height);
-    return ctx->image_write(ctx, x, y, width, height, ctx->shmimage->data);
+    return ctx->write_image(ctx, x, y, width, height, ctx->shmimage->data);
 }
 
 static int output_pointer_image(struct context* ctx) {
     XFixesCursorImage* cursor = XFixesGetCursorImage(ctx->display);
     char* data = ctx->buffer + POINTERCMD_HEAD_LEN; // leave some head space for cmd header
     cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
-    return ctx->pointer_write(ctx, cursor->x, cursor->y
+    return ctx->write_pointer(ctx, cursor->x, cursor->y
                        , cursor->width, cursor->height, data);
 }
 
 static int output_pointer_coords(struct context* ctx, int x, int y) {
-    return ctx->pointer_write(ctx, x, y, 0, 0, ctx->buffer);
+    return ctx->write_pointer(ctx, x, y, 0, 0, ctx->buffer);
 }
 
 static int setup_display(const char * display_name, struct context* ctx) {
@@ -215,7 +215,7 @@ static int handshake(struct context* ctx) {
     char version;
     XWindowAttributes attrib;
     
-    if (! ctx->receive_init(ctx, buf, INIT_CMD_LEN)) {
+    if (! ctx->init_conn(ctx, buf, INIT_CMD_LEN)) {
         return 0;
     }
     if (buf[0] != 0) {
@@ -296,6 +296,7 @@ static void pump(struct context* ctx) {
             millis = now();
         }
     }
+    ctx->fin = 0;
 }
 
 static struct context context;
@@ -309,7 +310,7 @@ int main(int argc, char* argv[]) {
     long int port;
     int i;
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
-    while ((c = getopt (argc, argv, "hdD:l:p:u::")) != -1) {
+    while ((c = getopt (argc, argv, "hduD:l:p:")) != -1) {
         switch (c)
         {
         case 'd':
@@ -349,20 +350,7 @@ int main(int argc, char* argv[]) {
             break;
 #if WITH_USB
         case 'u':
-            if (optarg != NULL) {
-                char* ppid = strchr(optarg, ':');
-                if (NULL == ppid) {
-                    usage();
-                    exit(1);
-                }
-                ppid += + 1;
-                uint16_t vid, pid;
-                vid = strtol(optarg, NULL, 16);
-                pid = strtol(ppid, NULL, 16);
-                init_usb(&context, vid, pid);
-            } else {
-                init_usb(&context, 0, 0);
-            }
+            init_usb(&context);
             break;
 #endif /*WITH_USB*/
         default:
@@ -380,7 +368,7 @@ int main(int argc, char* argv[]) {
 
     while (1) {
         //TODO: uctx is still alive here on second iteration!
-        if (context.receive_init) {
+        if (context.init_conn) {
             if (!handshake(&context)) {
                 slog(LOG_ERR, "handshake failed. Aborting...");
                 exit(1);
