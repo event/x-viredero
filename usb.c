@@ -43,6 +43,8 @@
 #define BLK_OUT_ENDPOINT 0x02
 #define BLK_IN_ENDPOINT 0x81
 
+static libusb_hotplug_callback_handle callback_handle;
+
 static int xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
     int res = libusb_control_transfer(hndl, 0x40, 52, 0, wIdx
                                       , str, strlen(str), 0);
@@ -148,6 +150,10 @@ static int usb_pntr_writer(struct context* ctx, int x, int y
 static int usb_receive_init(struct context* ctx, char* buf, int size) {
     int received = 0;
     int response = LIBUSB_ERROR_TIMEOUT;
+    while (NULL == ctx->w.uctx.hndl) {
+        struct timeval tv = {.tv_sec = 3, .tv_usec = 0};
+        libusb_handle_events_timeout(NULL, &tv);
+    }
     while (size > 0 && (LIBUSB_ERROR_TIMEOUT == response || 0 == response)) {
         int t = 0;
         response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, buf
@@ -164,6 +170,54 @@ static int usb_receive_init(struct context* ctx, char* buf, int size) {
 }
 
 
+static libusb_device* get_by_bus_port(libusb_device*** devs, uint8_t port, uint8_t bus) {
+    int cnt = libusb_get_device_list(NULL, devs);
+    if (cnt < 0) {
+        slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
+        exit(1);
+    }
+    cnt -= 1;
+    while (cnt >= 0 && (libusb_get_bus_number((*devs)[cnt]) != bus
+                        || libusb_get_port_number((*devs)[cnt]) != port)) {
+        cnt -= 1;
+    }
+    if (cnt < 0) {
+        return NULL;
+    }
+    return (*devs)[cnt];
+} 
+
+static int hotplug_callback(struct libusb_context* usbctx, struct libusb_device* dev
+                         , libusb_hotplug_event event, void* user_data) {
+    struct context* ctx = (struct context*)user_data;
+    libusb_device** devs;
+    uint8_t bus, port;
+    if (ctx->w.uctx.hndl != NULL) {
+        return 0;
+    }
+    if (!try_setup_accessory(dev)) {
+        slog(LOG_NOTICE, "USB: Failed to setup accessory mode");
+        return 0;
+    }
+    port = libusb_get_port_number(dev);
+    bus = libusb_get_bus_number(dev);
+    slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", port, bus);
+    sleep(5);
+    dev = get_by_bus_port(&devs, bus, port);
+    if (NULL == dev) {
+        slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
+        exit(1);
+    }
+    libusb_free_device_list(devs, 1);
+    slog(LOG_NOTICE, "USB: accessory mode setup success");
+    int res = libusb_open(dev, &ctx->w.uctx.hndl);
+    if (res < 0) {
+        slog(LOG_ERR, "USB: failed to open: %s", libusb_strerror(res));
+        ctx->w.uctx.hndl = NULL;
+    }
+    return 0;
+}
+
 void init_usb(struct context* ctx, uint16_t vid, uint16_t pid) {
     struct usb_context* uctx = &ctx->w.uctx;
     libusb_device** devs;
@@ -171,8 +225,12 @@ void init_usb(struct context* ctx, uint16_t vid, uint16_t pid) {
     int cnt;
     uint8_t port, bus;
     int setup_required = 1;
+    ctx->image_write = usb_img_writer;
+    ctx->pointer_write = usb_pntr_writer;
+    ctx->receive_init = usb_receive_init;
+    ctx->send_reply = usb_write;
     libusb_init(NULL);
-    libusb_set_debug(NULL, 3);
+    libusb_set_debug(NULL, LIBUSB_LOG_LEVEL_INFO);
     cnt = libusb_get_device_list(NULL, &devs);
     if (cnt < 0) {
         slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
@@ -194,8 +252,14 @@ void init_usb(struct context* ctx, uint16_t vid, uint16_t pid) {
         }
     }
     if (NULL == tgt) {
-        slog(LOG_ERR, "USB: failed to setup accessory mode on any device");
-        exit(1);
+        slog(LOG_NOTICE, "USB: failed to setup accessory mode on any device. Waiting...");
+        ctx->w.uctx.hndl = NULL;
+        libusb_hotplug_register_callback(NULL, LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED
+                                         , 0, LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY
+                                         , LIBUSB_HOTPLUG_MATCH_ANY
+                                         , hotplug_callback
+                                         , (void*)ctx, &callback_handle);
+        return;
     }
     if (setup_required) {
         port = libusb_get_port_number(tgt);
@@ -203,23 +267,15 @@ void init_usb(struct context* ctx, uint16_t vid, uint16_t pid) {
         slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", port, bus);
         libusb_free_device_list(devs, 1);
         sleep(5);
-        cnt = libusb_get_device_list(NULL, &devs);
-        if (cnt < 0) {
-            slog(LOG_ERR, "USB: listing devices failed: %s", libusb_strerror(cnt));
-            exit(1);
-        }
-        cnt -= 1;
-        while (cnt >= 0 && (libusb_get_bus_number(devs[cnt]) != bus
-                            || libusb_get_port_number(devs[cnt]) != port)) {
-            cnt -= 1;
-        }
-        if (cnt < 0) {
+        tgt = get_by_bus_port(&devs, bus, port);
+        if (NULL == tgt) {
             slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
             exit(1);
         }
     }
+        
     slog(LOG_NOTICE, "USB: accessory mode setup success");
-    int res = libusb_open(devs[cnt], &uctx->hndl);
+    int res = libusb_open(tgt, &uctx->hndl);
     libusb_free_device_list(devs, 1);
     
     if (res < 0) {
@@ -232,9 +288,5 @@ void init_usb(struct context* ctx, uint16_t vid, uint16_t pid) {
         libusb_close(uctx->hndl);
         return;
     }
-    ctx->image_write = usb_img_writer;
-    ctx->pointer_write = usb_pntr_writer;
-    ctx->receive_init = usb_receive_init;
-    ctx->send_reply = usb_write;
 }
 

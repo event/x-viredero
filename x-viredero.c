@@ -43,6 +43,7 @@
 #define CURSOR_MAX_SIZE 64
 #define CURSOR_BUFFER_SIZE (4 * CURSOR_MAX_SIZE * CURSOR_MAX_SIZE + POINTERCMD_HEAD_LEN)
 #define POINTER_CHECK_INTERVAL_MSEC 50
+#define FAILURES_EXIT_PUMP 3
 
 static int max_log_level = 8;
 
@@ -114,22 +115,19 @@ static int output_damage(struct context* ctx, int x, int y, int width, int heigh
         return 0;
     }
     zpixmap2rgb(ctx->shmimage->data, width * height);
-    ctx->image_write(ctx, x, y, width, height, ctx->shmimage->data);
-    return 1;
+    return ctx->image_write(ctx, x, y, width, height, ctx->shmimage->data);
 }
 
 static int output_pointer_image(struct context* ctx) {
     XFixesCursorImage* cursor = XFixesGetCursorImage(ctx->display);
     char* data = ctx->buffer + POINTERCMD_HEAD_LEN; // leave some head space for cmd header
     cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
-    ctx->pointer_write(ctx, cursor->x, cursor->y
+    return ctx->pointer_write(ctx, cursor->x, cursor->y
                        , cursor->width, cursor->height, data);
-    return 1;
 }
 
 static int output_pointer_coords(struct context* ctx, int x, int y) {
-    ctx->pointer_write(ctx, x, y, 0, 0, ctx->buffer);
-    return 1;
+    return ctx->pointer_write(ctx, x, y, 0, 0, ctx->buffer);
 }
 
 static int setup_display(const char * display_name, struct context* ctx) {
@@ -255,6 +253,51 @@ static long now() {
     return tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
 }
 
+static void update_fail_cnt(int res, int* fail) {
+    if (res) {
+        *fail = 0;
+    } else {
+        *fail += 1;
+    }
+}
+
+static void pump(struct context* ctx) {
+    long oldmillis = 0;
+    int oldx = 0;
+    int oldy = 0;
+    int fail_cnt = 0;
+    while (!ctx->fin && fail_cnt < FAILURES_EXIT_PUMP) {
+        struct timespec tp;
+        long millis = now();
+        if (millis - oldmillis > POINTER_CHECK_INTERVAL_MSEC) {
+            int junk, x, y;
+            Window junkw;
+            XQueryPointer(ctx->display, ctx->root, &junkw, &junkw
+                          , &x, &y, &junk, &junk, &junk);
+            if (x != oldx || y != oldy) {
+                update_fail_cnt(output_pointer_coords(ctx, x, y), &fail_cnt);
+                oldx = x;
+                oldy = y;
+            }
+            oldmillis = millis;
+        }
+        while (XPending(ctx->display) > 0 && millis - oldmillis < POINTER_CHECK_INTERVAL_MSEC) {
+            XEvent event;
+            XNextEvent(ctx->display, &event);
+            if (ctx->cursor_evt_base + XFixesCursorNotify == event.type) {
+                update_fail_cnt(output_pointer_image(ctx), &fail_cnt);
+            } else if (ctx->damage_evt_base + XDamageNotify == event.type) {
+                XDamageNotifyEvent* de = (XDamageNotifyEvent*) &event;
+                if (de->drawable == ctx->root) {
+                    update_fail_cnt(output_damage(ctx, de->area.x, de->area.y
+                                                  , de->area.width, de->area.height), &fail_cnt);
+                }
+            }
+            millis = now();
+        }
+    }
+}
+
 static struct context context;
 
 int main(int argc, char* argv[]) {
@@ -264,8 +307,7 @@ int main(int argc, char* argv[]) {
     int debug = 0;
     int len;
     long int port;
-    int i, oldx, oldy;
-    long oldmillis = 0;
+    int i;
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
     while ((c = getopt (argc, argv, "hdD:l:p:u::")) != -1) {
         switch (c)
@@ -335,45 +377,18 @@ int main(int argc, char* argv[]) {
     }
     setup_display(disp_name, &context);
     slog(LOG_NOTICE, "%s up and running", PROG);
-    if (context.receive_init) {
-        if (!handshake(&context)) {
-            slog(LOG_ERR, "handshake failed. Aborting...");
-            exit(1);
-        }
-    }
-    slog(LOG_INFO, "handshake success");
-    output_pointer_image(&context);
-    oldx = 0;
-    oldy = 0;
-    while (! context.fin) {
-        struct timespec tp;
-        long millis = now();
-        if (millis - oldmillis > POINTER_CHECK_INTERVAL_MSEC) {
-            int junk, x, y;
-            Window junkw;
-            XQueryPointer(context.display, context.root, &junkw, &junkw, &x, &y, &junk, &junk, &junk);
-            if (x != oldx || y != oldy) {
-                output_pointer_coords(&context, x, y);
-                oldx = x;
-                oldy = y;
+
+    while (1) {
+        //TODO: uctx is still alive here on second iteration!
+        if (context.receive_init) {
+            if (!handshake(&context)) {
+                slog(LOG_ERR, "handshake failed. Aborting...");
+                exit(1);
             }
-            oldmillis = millis;
         }
-        while (XPending(context.display) > 0 && millis - oldmillis < POINTER_CHECK_INTERVAL_MSEC) {
-            XEvent event;
-            XNextEvent(context.display, &event);
-            if (context.cursor_evt_base + XFixesCursorNotify == event.type) {
-                output_pointer_image(&context);
-            } else if (context.damage_evt_base + XDamageNotify == event.type) {
-                XDamageNotifyEvent* de = (XDamageNotifyEvent*) &event;
-                if (de->drawable == context.root) {
-                    output_damage(
-                        &context, de->area.x, de->area.y
-                        , de->area.width, de->area.height);
-                }
-            }
-            millis = now();
-        }
+        slog(LOG_INFO, "handshake success");
+        output_pointer_image(&context);
+        pump(&context);
     }
 }
   
