@@ -46,7 +46,6 @@
 #define FAILURES_EXIT_PUMP 3
 
 static int max_log_level = 8;
-
 void slog(int prio, char* format, ...) {
     if (prio > max_log_level) {
         return;
@@ -60,6 +59,13 @@ void slog(int prio, char* format, ...) {
 static void usage() {
     printf("USAGE: %s <opts>\n", PROG);
 }
+
+static long now() {
+    struct timespec tp;
+    clock_gettime(CLOCK_MONOTONIC, &tp);
+    return tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+}
+
 
 char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
     char* header = data - IMAGECMD_HEAD_LEN;
@@ -247,12 +253,6 @@ static int handshake(struct context* ctx) {
     return ctx->send_reply(ctx, buf, 12);
 }
 
-static long now() {
-    struct timespec tp;
-    clock_gettime(CLOCK_MONOTONIC, &tp);
-    return tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-}
-
 static void update_fail_cnt(int res, int* fail) {
     if (res) {
         *fail = 0;
@@ -367,12 +367,8 @@ int main(int argc, char* argv[]) {
     slog(LOG_NOTICE, "%s up and running", PROG);
 
     while (1) {
-        //TODO: uctx is still alive here on second iteration!
-        if (context.init_conn) {
-            if (!handshake(&context)) {
-                slog(LOG_ERR, "handshake failed. Aborting...");
-                exit(1);
-            }
+        while (context.init_conn && !handshake(&context)) {
+            slog(LOG_ERR, "handshake failed. Retrying...");
         }
         slog(LOG_INFO, "handshake success");
         output_pointer_image(&context);
