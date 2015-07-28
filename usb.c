@@ -83,6 +83,10 @@ static int try_setup_accessory(libusb_device* dev) {
         slog(LOG_DEBUG, "USB: xfer failed: %s", libusb_strerror(res));
         libusb_close(hndl);
         return 0;
+    } else if (0 == res) {
+        slog(LOG_NOTICE, "USB: not an android host");
+        libusb_close(hndl);
+        return 0;
     }
     slog(LOG_DEBUG, "USB Device version code: %d", buf[1] << 8 | buf[0]);
     
