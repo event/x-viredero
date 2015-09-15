@@ -123,13 +123,10 @@ static int usb_write(struct context* ctx, char* data, int size) {
     return 1;
 }
 
-static int i = 0;
 static int usb_img_writer(struct context* ctx, int x, int y, int width, int height
                       , char* data) {
     char* header = fill_imagecmd_header(data, width, height, x, y);
     int size = (width * height * 3) + IMAGECMD_HEAD_LEN;
-//    slog(LOG_DEBUG, "%d %d %d %d %d %d", i, width, height, x, y, size - IMAGECMD_HEAD_LEN);
-    i += 1;
     return usb_write(ctx, header, size);
 }
 
