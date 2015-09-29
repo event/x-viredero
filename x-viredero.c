@@ -299,6 +299,26 @@ static void pump(struct context* ctx) {
     ctx->fin = 0;
 }
 
+static int success_init_hook(struct context* ctx, char* str) {
+    return 1;
+}
+
+static int exec_init_hook_fname(struct context* ctx, char* str) {
+    FILE* p = popen(ctx->init_hook_fname, "w");
+    if (NULL == p) {
+        return 0;
+    }
+    fwrite(str, 1, strlen(str) + 1, p);
+    int res = pclose(p);
+    if (0 == res) {
+        return 1;
+    }
+    if (res < 0) {
+        slog(LOG_WARNING, "error executing init hook '%s': %m\n", ctx->init_hook_fname);
+    }
+    return 0;
+}
+
 static struct context context;
 
 int main(int argc, char* argv[]) {
@@ -309,8 +329,9 @@ int main(int argc, char* argv[]) {
     int len;
     long int port;
     int i;
+    context.init_hook = success_init_hook;
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
-    while ((c = getopt (argc, argv, "hduD:l:p:")) != -1) {
+    while ((c = getopt (argc, argv, "hduD:l:p:i:")) != -1) {
         switch (c)
         {
         case 'd':
@@ -347,6 +368,12 @@ int main(int argc, char* argv[]) {
             path = malloc(len + 1);
             strncpy(path, optarg, len);
             init_ppm(&context, path);
+            break;
+        case 'i':
+            len = strlen(optarg) + 1;
+            context.init_hook_fname = malloc(len);
+            strncpy(context.init_hook_fname, optarg, len);
+            context.init_hook = exec_init_hook_fname;
             break;
 #if WITH_USB
         case 'u':

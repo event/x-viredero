@@ -81,6 +81,7 @@ struct context {
     int cursor_evt_base;
     int fin;
     char* buffer;
+    char* init_hook_fname;
     short cursor_x;
     short cursor_y;
     union writer_cfg{
@@ -94,6 +95,7 @@ struct context {
     int (*write_pointer)(struct context*, int, int, int, int, char*);
     int (*change_scene)(struct context*);
     int (*recenter)(struct context*, int, int);
+    int (*init_hook)(struct context*, char*);
 };
 
 
