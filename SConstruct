@@ -11,7 +11,7 @@ if int(ut) :
     env.Program('usb-tst', files)
 else :       
     prgm = env.Program('x-viredero', files)
-    dst = ARGUMENTS.get('DESTDIR', '/usr/bin')
+    dst = ARGUMENTS.get('DESTDIR', '') + '/usr/bin'
     env.Install(dst, prgm)
     env.Alias('install', dst)
 
