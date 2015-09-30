@@ -10,4 +10,9 @@ if int(ut) :
     files = ['usb-tst.c', 'usb.c']
     env.Program('usb-tst', files)
 else :       
-    env.Program('x-viredero', files)
+    prgm = env.Program('x-viredero', files)
+    dst = ARGUMENTS.get('DESTDIR', '') + '/usr/bin'
+    env.Install(dst, prgm)
+    env.Alias('install', dst)
+
+  

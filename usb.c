@@ -43,6 +43,8 @@
 #define BLK_OUT_ENDPOINT 0x02
 #define BLK_IN_ENDPOINT 0x81
 
+#define INIT_HOOK_MSG_LEN 1024
+
 static libusb_hotplug_callback_handle callback_handle;
 
 static int xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
@@ -56,23 +58,34 @@ static int xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
     return 1;
 }
 
-static int try_setup_accessory(libusb_device* dev) {
-    libusb_device_handle* hndl;
-    unsigned char buf[2];
-    int res;
-    res = libusb_open(dev, &hndl);
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to open: %s", libusb_strerror(res));
-        return 0;
+static void fill_init_hook_msg(unsigned char* str, libusb_device_handle* hndl) {
+    struct libusb_device_descriptor desc;
+    libusb_device* dev = libusb_get_device(hndl);
+    int res = libusb_get_device_descriptor(dev, &desc);
+    if (res != 0) {
+        slog(LOG_DEBUG, "USB: get descriptor failed: %s", libusb_strerror(res));
+        str[0] = '\0';
+        return;
     }
-    res = libusb_claim_interface(hndl, 0);
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to claim interface: %s", libusb_strerror(res));
-        libusb_close(hndl);
-        return 0;
+    int len = sprintf(str, "Start viredero on usb %04hx:%04hx: ", desc.idVendor, desc.idProduct);
+    int strlen = libusb_get_string_descriptor_ascii(hndl, desc.iProduct
+                                                    , str + len, INIT_HOOK_MSG_LEN - len);
+    if (strlen < 0) {
+        slog(LOG_DEBUG, "USB: get product name failed: %s", libusb_strerror(strlen));
+        return;
     }
+    strcat(str, " by ");
+    len += strlen + 4;
+    strlen = libusb_get_string_descriptor_ascii(hndl, desc.iManufacturer
+                                                , str + len, INIT_HOOK_MSG_LEN - len);
+    if (strlen < 0) {
+        slog(LOG_DEBUG, "USB: get manufacturer name failed: %s", libusb_strerror(strlen));
+    }
+}
 
-    res = libusb_control_transfer(
+static int init_accessory(struct context* ctx, libusb_device_handle* hndl) {
+    unsigned char buf[2];
+    int res = libusb_control_transfer(
         hndl, 0xC0 //bmRequestType
         , 51 //bRequest
         , 0, 0 //wValue, wIndex
@@ -81,11 +94,20 @@ static int try_setup_accessory(libusb_device* dev) {
         , 0); //timeout
     if (res < 0) {
         slog(LOG_DEBUG, "USB: xfer failed: %s", libusb_strerror(res));
-        libusb_close(hndl);
         return 0;
     } else if (0 == res) {
         slog(LOG_NOTICE, "USB: not an android host");
-        libusb_close(hndl);
+        return 0;
+    }
+    unsigned char* str = malloc(INIT_HOOK_MSG_LEN);
+    fill_init_hook_msg(str, hndl);
+    if (str[0] != '\0') {
+        res = ctx->init_hook(ctx, str);
+    } else {
+        res = 0;
+    }
+    free(str);
+    if (! res) {
         return 0;
     }
     slog(LOG_DEBUG, "USB Device version code: %d", buf[1] << 8 | buf[0]);
@@ -100,8 +122,27 @@ static int try_setup_accessory(libusb_device* dev) {
         return 0;
     }
     libusb_control_transfer(hndl, 0x40, 53, 0, 0, NULL, 0, 0);
-    libusb_release_interface(hndl, 0);
     return 1;
+}
+
+static int try_setup_accessory(struct context* ctx, libusb_device* dev) {
+    libusb_device_handle* hndl;
+    int res;
+    res = libusb_open(dev, &hndl);
+    if (res < 0) {
+        slog(LOG_DEBUG, "USB: failed to open: %s", libusb_strerror(res));
+        return 0;
+    }
+    res = libusb_claim_interface(hndl, 0);
+    if (res < 0) {
+        slog(LOG_DEBUG, "USB: failed to claim interface: %s", libusb_strerror(res));
+        libusb_close(hndl);
+        return 0;
+    }
+    res = init_accessory(ctx, hndl);
+    libusb_release_interface(hndl, 0);
+    libusb_close(hndl);
+    return res;
 }
 
 static int usb_write(struct context* ctx, char* data, int size) {
@@ -203,7 +244,7 @@ static int hotplug_callback(struct libusb_context* usbctx, struct libusb_device*
     if (ctx->w.uctx.hndl != NULL) {
         return 0;
     }
-    if (!try_setup_accessory(dev)) {
+    if (!try_setup_accessory(ctx, dev)) {
         slog(LOG_DEBUG, "USB: Failed to setup accessory mode");
         return 0;
     }
