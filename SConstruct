@@ -14,5 +14,8 @@ else :
     dst = ARGUMENTS.get('DESTDIR', '') + '/usr/bin'
     env.Install(dst, prgm)
     env.Alias('install', dst)
+Export('env')
+if 'debian' in COMMAND_LINE_TARGETS:
+    SConscript("deb/SConscript")
 
   
