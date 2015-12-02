@@ -6,7 +6,7 @@ Import('env') # exported by parent SConstruct
 DEBNAME = 'x-viredero'
 DEBMAINT = 'Leonid Movshovich (event.riga@gmail.com)'
 DEBARCH = 'i386'
-DEBDEPENDS = 'libusb-1.0-0 (>= 2:1.0.0), libx11-6, libxdamage1 (>= 1:1.1), libxext6, libxfixes4' 
+DEBDEPENDS = 'libusb-1.0-0 (>= 2:1.0.0), libx11-6, libxdamage1 (>= 1:1.1), libxext6, libxfixes3'
 DEBDESC = 'Viredero - virtual reality screen'
 try:
     DEBVERSION = os.environ['VERSION']
