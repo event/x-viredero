@@ -25,6 +25,8 @@
 #include <unistd.h>
 #include <syslog.h>
 
+#include <arpa/inet.h>
+
 #include <libusb-1.0/libusb.h>
 #include "x-viredero.h"
 

@@ -68,9 +68,11 @@ struct sock_context {
     int sock;
 };
 
+#if WITH_USB
 struct usb_context {
     libusb_device_handle* hndl;
 };
+#endif
 
 struct context {
     Display* display;
@@ -87,7 +89,9 @@ struct context {
     union writer_cfg{
         struct sock_context sctx;
         struct ppm_context pctx;
+#if WITH_USB
         struct usb_context uctx;
+#endif
     } w;
     int (*init_conn)(struct context*, char*, int);
     int (*send_reply)(struct context*, char*, int);
