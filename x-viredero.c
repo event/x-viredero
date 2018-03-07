@@ -345,6 +345,17 @@ static int exec_init_hook_fname(struct context* ctx, char* str) {
     return 0;
 }
 
+void check_len_or_die(char* value, char* field_name) {
+    int len = strlen(value);
+    if (len <= DISP_NAME_MAXLEN) {
+        return;
+    }
+    fprintf(stderr, "%s %s is longer then %d."
+            " We can't handle it. Good bye.\n"
+            , field_name, optarg, DISP_NAME_MAXLEN);
+    exit(1);
+}
+
 static struct context context;
 
 int main(int argc, char* argv[]) {
@@ -355,24 +366,18 @@ int main(int argc, char* argv[]) {
     int len;
     long int port;
     int i;
-    int screen_res_width, screen_res_height;
+    int screen_res_width = -1, screen_res_height;
 
     context.init_hook = success_init_hook;
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
-    while ((c = getopt (argc, argv, "hduD:l:p:i:r:")) != -1) {
+    while ((c = getopt (argc, argv, "hdu:D:l:p:i:r:")) != -1) {
         switch (c)
         {
         case 'd':
             debug = 1;
             break;
         case 'D':
-            len = strlen(optarg);
-            if (len > DISP_NAME_MAXLEN) {
-                fprintf(stderr, "Display name %s is longer then %d"
-                        ". We can't handle it. Good bye.\n"
-                        , optarg, DISP_NAME_MAXLEN);
-                exit(1);
-            }
+            check_len_or_die(optarg, "Display name");
             disp_name = malloc(len + 1);
             strncpy(disp_name, optarg, len);
             break;
@@ -386,25 +391,13 @@ int main(int argc, char* argv[]) {
             init_socket(&context, (uint16_t)port);
             break;
         case 'p':
-            len = strlen(optarg);
-            if (len > DISP_NAME_MAXLEN) {
-                fprintf(stderr, "File name %s is longer then %d"
-                        ". We can't handle it. Good bye.\n"
-                        , optarg, DISP_NAME_MAXLEN);
-                exit(1);
-            }
+            check_len_or_die(optarg, "File name");
             path = malloc(len + 1);
             strncpy(path, optarg, len);
             init_ppm(&context, path);
             break;
         case 'r':
-            len = strlen(optarg);
-            if (len > DISP_NAME_MAXLEN) {
-                fprintf(stderr, "Resolution %s is longer then %d"
-                        ". We can't handle it. Good bye.\n"
-                        , optarg, DISP_NAME_MAXLEN);
-                exit(1);
-            }
+            check_len_or_die(optarg, "Resolution");
             char* delim = strchr(optarg, 'x');
             if (delim != NULL) {
                 screen_res_width = strtol(optarg, NULL, 10);
@@ -421,7 +414,18 @@ int main(int argc, char* argv[]) {
             break;
 #if WITH_USB
         case 'u':
-            init_usb(&context);
+            check_len_or_die(optarg, "USB device");
+            delim = strchr(optarg, '.');
+            int port, bus;
+            if (delim != NULL) {
+                bus = strtol(optarg, NULL, 10);
+                port = strtol(delim + 1, NULL, 10);
+            } else {
+                fprintf(stderr, "USB device have to be specified as <bus>.<port>. Exiting...\n");
+                exit(1);
+            }
+
+            init_usb(&context, bus, port);
             break;
 #endif /*WITH_USB*/
         default:
@@ -435,7 +439,9 @@ int main(int argc, char* argv[]) {
         daemonize();
     }
     setup_display(disp_name, &context);
-    set_resolution(&context, screen_res_width, screen_res_height);
+    if (screen_res_width > 0) {
+        set_resolution(&context, screen_res_width, screen_res_height);
+    }
     slog(LOG_NOTICE, "%s up and running", PROG);
 
     while (1) {

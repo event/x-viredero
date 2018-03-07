@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <syslog.h>
 
@@ -94,10 +95,12 @@ static int init_accessory(struct context* ctx, libusb_device_handle* hndl) {
         , buf //data
         , 2 //wLength
         , 0); //timeout
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: xfer failed: %s", libusb_strerror(res));
-        return 0;
-    } else if (0 == res) {
+    while (res < 0) {
+        slog(LOG_DEBUG, "USB: cfg xfer failed: %s", libusb_strerror(res));
+        sleep(5);
+        libusb_control_transfer(hndl, 0xC0, 51, 0, 0, buf, 2, 0);
+    }
+    if (0 == res) {
         slog(LOG_NOTICE, "USB: not an android host");
         return 0;
     }
@@ -127,7 +130,7 @@ static int init_accessory(struct context* ctx, libusb_device_handle* hndl) {
     return 1;
 }
 
-static int try_setup_accessory(struct context* ctx, libusb_device* dev) {
+static bool try_setup_accessory(struct context* ctx, libusb_device* dev) {
     libusb_device_handle* hndl;
     int res;
     res = libusb_open(dev, &hndl);
@@ -198,6 +201,7 @@ static int usb_pntr_writer(struct context* ctx, int x, int y
 static int usb_init_conn(struct context* ctx, char* buf, int size) {
     int received = 0;
     int response = LIBUSB_ERROR_TIMEOUT;
+    slog(LOG_DEBUG, "USB: init connection");
     while (NULL == ctx->w.uctx.hndl) {
         struct timeval tv = {.tv_sec = 3, .tv_usec = 0};
         libusb_handle_events_timeout(NULL, &tv);
@@ -207,6 +211,7 @@ static int usb_init_conn(struct context* ctx, char* buf, int size) {
         response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, buf
                                         , size, &t
                                         , USB_XFER_TIMEO_MSEC * 120);
+        slog(LOG_DEBUG, "USB: init: sent %d/%d bytes", t, size);
         buf += t;
         size -= t;
     }
@@ -238,47 +243,39 @@ static libusb_device* get_by_bus_port(libusb_device*** devs, uint8_t bus, uint8_
     return (*devs)[cnt];
 } 
 
-static int hotplug_callback(struct libusb_context* usbctx, struct libusb_device* dev
-                         , libusb_hotplug_event event, void* user_data) {
-    struct context* ctx = (struct context*)user_data;
-    libusb_device** devs;
-    uint8_t bus, port;
-    if (ctx->w.uctx.hndl != NULL) {
-        return 0;
-    }
-    if (!try_setup_accessory(ctx, dev)) {
-        slog(LOG_DEBUG, "USB: Failed to setup accessory mode");
-        return 0;
-    }
-    port = libusb_get_port_number(dev);
-    bus = libusb_get_bus_number(dev);
-    slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", bus, port);
-    sleep(5); // let the android disconnect and connect back
-    dev = get_by_bus_port(&devs, bus, port);
-    if (NULL == dev) {
-        slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
-        return 0;
-    }
-    libusb_free_device_list(devs, 1);
-    slog(LOG_NOTICE, "USB: accessory mode setup success");
-    int res = libusb_open(dev, &ctx->w.uctx.hndl);
-    if (res < 0) {
-        slog(LOG_ERR, "USB: failed to open: %s", libusb_strerror(res));
-        ctx->w.uctx.hndl = NULL;
-    }
-    return 0;
-}
-
-void init_usb(struct context* ctx) {
+void init_usb(struct context* ctx, int bus, int port) {
     ctx->write_image = usb_img_writer;
     ctx->write_pointer = usb_pntr_writer;
     ctx->init_conn = usb_init_conn;
     ctx->send_reply = usb_write;
     libusb_init(NULL);
     libusb_set_debug(NULL, LIBUSB_LOG_LEVEL_INFO);
-    libusb_hotplug_register_callback(
-        NULL, LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED, LIBUSB_HOTPLUG_ENUMERATE
-        , LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY
-        , hotplug_callback, (void*)ctx, &callback_handle);
+    slog(LOG_NOTICE, "USB: trying %d.%d", bus, port);
+    struct libusb_device** devs; //this is outside get_by_bus_port because it returns an item this list
+    struct libusb_device* dev = get_by_bus_port(&devs, bus, port);
+    if (NULL == dev) {
+        slog(LOG_ERR, "USB: device @%d.%d does not exist", bus, port);
+        return;
+    }
+    bool acc_res = try_setup_accessory(ctx, dev);
+    libusb_free_device_list(devs, 1);
+    if (!acc_res) {
+        slog(LOG_DEBUG, "USB: Failed to setup accessory mode");
+        return;
+    }
+    slog(LOG_NOTICE, "USB: Switched to accessory mode on device %d.%d", bus, port);
+    sleep(5); // let the android disconnect and connect back
+    dev = get_by_bus_port(&devs, bus, port);
+    if (NULL == dev) {
+        slog(LOG_ERR, "USB: failed to setup accessory mode on device @%d.%d", bus, port);
+        return;
+    }
+    slog(LOG_NOTICE, "USB: accessory mode setup success");
+    int res = libusb_open(dev, &ctx->w.uctx.hndl);
+    libusb_free_device_list(devs, 1);
+    if (res < 0) {
+        slog(LOG_ERR, "USB: failed to open: %s", libusb_strerror(res));
+        ctx->w.uctx.hndl = NULL;
+    }
 }
 

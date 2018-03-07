@@ -106,7 +106,7 @@ struct context {
 void slog(int, char*, ...);
 char* fill_imagecmd_header(char*, int, int, int, int);
 #if WITH_USB
-void init_usb(struct context*);
+void init_usb(struct context*, int bus, int port);
 #endif
 int dummy_pointer_writer(struct context*, int, int, int, int, char*);
 void init_ppm(struct context*, char*);
