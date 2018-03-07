@@ -446,13 +446,16 @@ int main(int argc, char* argv[]) {
     }
     slog(LOG_NOTICE, "%s up and running", PROG);
 
-    while (1) {
-        while (context.init_conn && !handshake(&context)) {
-            slog(LOG_ERR, "handshake failed. Retrying...");
-        }
-        slog(LOG_INFO, "handshake success");
-        output_pointer_image(&context);
-        pump(&context);
+    while (context.init_conn && (handshake_attempts > 0) && !handshake(&context)) {
+        slog(LOG_ERR, "handshake failed. Retrying...");
+        handshake_attempts -= 1;
     }
+    if (0 == handshake_attempts) {
+        slog(LOG_WARNING, "All handshake attempts failed. Exiting...");
+        exit(0);
+    }
+    slog(LOG_INFO, "handshake success");
+    output_pointer_image(&context);
+    pump(&context);
 }
   
