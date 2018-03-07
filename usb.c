@@ -50,15 +50,15 @@
 
 static libusb_hotplug_callback_handle callback_handle;
 
-static int xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
+static bool xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
     int res = libusb_control_transfer(hndl, 0x40, 52, 0, wIdx
                                       , str, strlen(str), 0);
     if (res < 0) {
         slog(LOG_DEBUG, "USB: xfer failed: %s", libusb_strerror(res));
         libusb_close(hndl);
-        return 0;
+        return false;
     }
-    return 1;
+    return true;
 }
 
 static void fill_init_hook_msg(unsigned char* str, libusb_device_handle* hndl) {
@@ -86,7 +86,7 @@ static void fill_init_hook_msg(unsigned char* str, libusb_device_handle* hndl) {
     }
 }
 
-static int init_accessory(struct context* ctx, libusb_device_handle* hndl) {
+static bool init_accessory(struct context* ctx, libusb_device_handle* hndl) {
     unsigned char buf[2];
     int res = libusb_control_transfer(
         hndl, 0xC0 //bmRequestType
@@ -102,7 +102,7 @@ static int init_accessory(struct context* ctx, libusb_device_handle* hndl) {
     }
     if (0 == res) {
         slog(LOG_NOTICE, "USB: not an android host");
-        return 0;
+        return false;
     }
     unsigned char* str = malloc(INIT_HOOK_MSG_LEN);
     fill_init_hook_msg(str, hndl);
@@ -113,7 +113,7 @@ static int init_accessory(struct context* ctx, libusb_device_handle* hndl) {
     }
     free(str);
     if (! res) {
-        return 0;
+        return false;
     }
     slog(LOG_DEBUG, "USB Device version code: %d", buf[1] << 8 | buf[0]);
     
@@ -124,25 +124,26 @@ static int init_accessory(struct context* ctx, libusb_device_handle* hndl) {
            && xfer_or_die(hndl, 4, USB_URI)
            && xfer_or_die(hndl, 5, USB_SERIAL_NUM)))
     {
-        return 0;
+        return false;
     }
     libusb_control_transfer(hndl, 0x40, 53, 0, 0, NULL, 0, 0);
-    return 1;
+    return true;
 }
 
 static bool try_setup_accessory(struct context* ctx, libusb_device* dev) {
     libusb_device_handle* hndl;
-    int res;
-    res = libusb_open(dev, &hndl);
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to open: %s", libusb_strerror(res));
-        return 0;
+    int usbres;
+    bool res;
+    usbres = libusb_open(dev, &hndl);
+    if (usbres < 0) {
+        slog(LOG_DEBUG, "USB: failed to open: %s", libusb_strerror(usbres));
+        return false;
     }
-    res = libusb_claim_interface(hndl, 0);
-    if (res < 0) {
-        slog(LOG_DEBUG, "USB: failed to claim interface: %s", libusb_strerror(res));
+    usbres = libusb_claim_interface(hndl, 0);
+    if (usbres < 0) {
+        slog(LOG_DEBUG, "USB: failed to claim interface: %s", libusb_strerror(usbres));
         libusb_close(hndl);
-        return 0;
+        return false;
     }
     res = init_accessory(ctx, hndl);
     libusb_release_interface(hndl, 0);
@@ -150,7 +151,7 @@ static bool try_setup_accessory(struct context* ctx, libusb_device* dev) {
     return res;
 }
 
-static int usb_write(struct context* ctx, char* data, int size) {
+static bool usb_write(struct context* ctx, char* data, int size) {
     int sent = 0;
     while (size > 0) { 
         int response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_OUT_ENDPOINT, data
@@ -161,22 +162,22 @@ static int usb_write(struct context* ctx, char* data, int size) {
                 ctx->w.uctx.hndl = NULL;
                 ctx->fin = 1;
             }
-            return 0;
+            return false;
         }
         size -= sent;
         data += sent;
     }
-    return 1;
+    return true;
 }
 
-static int usb_img_writer(struct context* ctx, int x, int y, int width, int height
+static bool usb_img_writer(struct context* ctx, int x, int y, int width, int height
                       , char* data) {
     char* header = fill_imagecmd_header(data, width, height, x, y);
     int size = (width * height * 3) + IMAGECMD_HEAD_LEN;
     return usb_write(ctx, header, size);
 }
 
-static int usb_pntr_writer(struct context* ctx, int x, int y
+static bool usb_pntr_writer(struct context* ctx, int x, int y
                            , int width, int height, char* pointer) {
     int size;
     char* data;
@@ -198,19 +199,18 @@ static int usb_pntr_writer(struct context* ctx, int x, int y
     return usb_write(ctx, data, size);
 }
 
-static int usb_init_conn(struct context* ctx, char* buf, int size) {
+static bool usb_init_conn(struct context* ctx, char* buf, int size) {
     int received = 0;
     int response = LIBUSB_ERROR_TIMEOUT;
     slog(LOG_DEBUG, "USB: init connection");
     while (NULL == ctx->w.uctx.hndl) {
-        struct timeval tv = {.tv_sec = 3, .tv_usec = 0};
-        libusb_handle_events_timeout(NULL, &tv);
+        return false;
     }
     while (size > 0 && (LIBUSB_ERROR_TIMEOUT == response || 0 == response)) {
         int t = 0;
         response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, buf
                                         , size, &t
-                                        , USB_XFER_TIMEO_MSEC * 120);
+                                        , USB_XFER_TIMEO_MSEC);
         slog(LOG_DEBUG, "USB: init: sent %d/%d bytes", t, size);
         buf += t;
         size -= t;
@@ -220,9 +220,9 @@ static int usb_init_conn(struct context* ctx, char* buf, int size) {
         if (LIBUSB_ERROR_NO_DEVICE == response) {
             ctx->w.uctx.hndl = NULL;
         }
-        return 0;
+        return false;
     }
-    return 1;
+    return true;
 }
 
 

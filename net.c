@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <syslog.h>
 
@@ -28,7 +29,7 @@
 
 #include "x-viredero.h"
 
-static int sock_img_writer(struct context* ctx, int x, int y, int width, int height
+static bool sock_img_writer(struct context* ctx, int x, int y, int width, int height
                        , char* data) {
     int size = width * height * 3;
     int fd = ctx->w.sctx.sock;
@@ -48,12 +49,12 @@ static int sock_img_writer(struct context* ctx, int x, int y, int width, int hei
             slog(LOG_WARNING, "send failed: %m");
             close(fd);
             fd = 0;
-            return 0;
+            return false;
         }
         size -= sent;
         header += sent;
     }
-    return 1;
+    return true;
 }
 
 void init_socket(struct context* ctx, uint16_t port) {

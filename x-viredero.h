@@ -20,6 +20,7 @@
 #ifndef __X_VIREDERO_H__
 #define __X_VIREDERO_H__
 
+#include <stdbool.h>
 #include <X11/Xlibint.h>
 #include <X11/extensions/XShm.h>
 #if WITH_USB
@@ -93,13 +94,13 @@ struct context {
         struct usb_context uctx;
 #endif
     } w;
-    int (*init_conn)(struct context*, char*, int);
-    int (*send_reply)(struct context*, char*, int);
-    int (*write_image)(struct context*, int, int, int, int, char*);
-    int (*write_pointer)(struct context*, int, int, int, int, char*);
-    int (*change_scene)(struct context*);
-    int (*recenter)(struct context*, int, int);
-    int (*init_hook)(struct context*, char*);
+    bool (*init_conn)(struct context*, char*, int);
+    bool (*send_reply)(struct context*, char*, int);
+    bool (*write_image)(struct context*, int, int, int, int, char*);
+    bool (*write_pointer)(struct context*, int, int, int, int, char*);
+    bool (*change_scene)(struct context*);
+    bool (*recenter)(struct context*, int, int);
+    bool (*init_hook)(struct context*, char*);
 };
 
 
@@ -108,7 +109,7 @@ char* fill_imagecmd_header(char*, int, int, int, int);
 #if WITH_USB
 void init_usb(struct context*, int bus, int port);
 #endif
-int dummy_pointer_writer(struct context*, int, int, int, int, char*);
+bool dummy_pointer_writer(struct context*, int, int, int, int, char*);
 void init_ppm(struct context*, char*);
 void init_socket(struct context*, uint16_t);
 

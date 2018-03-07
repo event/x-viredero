@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <time.h>
 #include <syslog.h>
@@ -108,25 +109,25 @@ static void cursor2rgba(unsigned long* cur_data, char* rgba_data, unsigned long 
     }
 }
 
-int dummy_pointer_writer(struct context* ctx, int x, int y
+bool dummy_pointer_writer(struct context* ctx, int x, int y
                          , int width, int height, char* pointer) {
-    return 1;
+    return true;
 }
 
-static int output_damage(struct context* ctx, int x, int y, int width, int height) {
+static bool output_damage(struct context* ctx, int x, int y, int width, int height) {
 //    slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
     ctx->shmimage->width = width;
     ctx->shmimage->height = height;
     if (!XShmGetImage(ctx->display, ctx->root
                       , ctx->shmimage, x, y, AllPlanes)) {
         slog(LOG_ERR, "unabled to get the image\n");
-        return 0;
+        return false;
     }
     zpixmap2rgb(ctx->shmimage->data, width * height);
     return ctx->write_image(ctx, x, y, width, height, ctx->shmimage->data);
 }
 
-static int output_pointer_image(struct context* ctx) {
+static bool output_pointer_image(struct context* ctx) {
     XFixesCursorImage* cursor = XFixesGetCursorImage(ctx->display);
     char* data = ctx->buffer + POINTERCMD_HEAD_LEN; // leave some head space for cmd header
     cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
@@ -134,33 +135,33 @@ static int output_pointer_image(struct context* ctx) {
                        , cursor->width, cursor->height, data);
 }
 
-static int output_pointer_coords(struct context* ctx, int x, int y) {
+static bool output_pointer_coords(struct context* ctx, int x, int y) {
     return ctx->write_pointer(ctx, x, y, 0, 0, ctx->buffer);
 }
 
-static int setup_display(const char * display_name, struct context* ctx) {
+static bool setup_display(const char * display_name, struct context* ctx) {
     Display* display = XOpenDisplay(display_name);
     int t;
     if (!display) {
         slog(LOG_ERR, "unable to open display '%s'\n"
              , display_name);
         usage();
-        return 0;
+        return false;
     }
 
     Window root = DefaultRootWindow(display);
 
     if (!XDamageQueryExtension (display, &ctx->damage_evt_base, &t)) {
         slog(LOG_ERR, "backend does not have Xdamage extension\n");
-        return 0;
+        return false;
     }
     if (!XShmQueryExtension(display)) {
         slog(LOG_ERR, "backend does not have XShm extension\n");
-        return 0;
+        return false;
     }
     if (!XFixesQueryExtension(display, &ctx->cursor_evt_base, &t)) {
         slog(LOG_ERR, "backend does not have XFixes extension\n");
-        return 0;
+        return false;
     }
     XFixesSelectCursorInput(display, root,
                             XFixesDisplayCursorNotifyMask);
@@ -171,7 +172,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
     {
         slog(LOG_ERR, "bad root with size %dx%d\n"
              , attrib.width, attrib.height);
-        return 0;
+        return false;
     }
     int scr = XDefaultScreen(display);
     ctx->shmimage = XShmCreateImage(
@@ -184,7 +185,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
         , IPC_CREAT | 0777);
     if (ctx->shminfo.shmid == -1) {
         slog(LOG_ERR, "Cannot get shared memory!");
-        return 0; 
+        return false;
     }
  
     ctx->shminfo.shmaddr = shmat(ctx->shminfo.shmid, 0, 0);
@@ -192,7 +193,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
     ctx->shmimage->data = ctx->shminfo.shmaddr + DATA_BUFFER_HEAD;
     if (!XShmAttach(display, &ctx->shminfo)) {
         slog(LOG_ERR, "Failed to attach shared memory!");
-        return 0;
+        return false;
     }
 
     ctx->buffer = (char*)malloc(CURSOR_BUFFER_SIZE);
@@ -201,7 +202,7 @@ static int setup_display(const char * display_name, struct context* ctx) {
     
     ctx->display = display;
     ctx->root = root;
-    return 1;
+    return true;
 }
 
 static void set_resolution(struct context* ctx, int width, int height) {
@@ -242,32 +243,32 @@ static void send_error_reply(struct context* ctx, enum CommandResultCode error) 
     ctx->send_reply(ctx, buf, 2);
 }
 
-static int handshake(struct context* ctx) {
+static bool handshake(struct context* ctx) {
     char* buf = ctx->buffer;
     char version;
     XWindowAttributes attrib;
     
     if (! ctx->init_conn(ctx, buf, INIT_CMD_LEN)) {
-        return 0;
+        return false;
     }
     if (buf[0] != 0) {
         send_error_reply(ctx, ErrorBadMessage);
-        return 0;
+        return false;
     }
 
     if (version > MAX_VIREDERO_PROT_VERSION) {
         send_error_reply(ctx, ErrorVersion);
-        return 0;
+        return false;
     }
     
     if ((buf[1] & SF_RGB) == 0) {
         send_error_reply(ctx, ErrorScreenFormatNotSupported);
-        return 0;
+        return false;
     }
 
     if ((buf[2] & PF_RGBA) == 0) {
         send_error_reply(ctx, ErrorPointerFormatNotSupported);
-        return 0;
+        return false;
     }
     buf[0] = InitReply;
     buf[1] = ResultSuccess;
@@ -279,7 +280,7 @@ static int handshake(struct context* ctx) {
     return ctx->send_reply(ctx, buf, 12);
 }
 
-static void update_fail_cnt(int res, int* fail) {
+static void update_fail_cnt(bool res, int* fail) {
     if (res) {
         *fail = 0;
     } else {
@@ -325,24 +326,24 @@ static void pump(struct context* ctx) {
     ctx->fin = 0;
 }
 
-static int success_init_hook(struct context* ctx, char* str) {
-    return 1;
+static bool success_init_hook(struct context* ctx, char* str) {
+    return true;
 }
 
-static int exec_init_hook_fname(struct context* ctx, char* str) {
+static bool exec_init_hook_fname(struct context* ctx, char* str) {
     FILE* p = popen(ctx->init_hook_fname, "w");
     if (NULL == p) {
-        return 0;
+        return false;
     }
     fwrite(str, 1, strlen(str) + 1, p);
     int res = pclose(p);
     if (0 == res) {
-        return 1;
+        return true;
     }
     if (res < 0) {
         slog(LOG_WARNING, "error executing init hook '%s': %m\n", ctx->init_hook_fname);
     }
-    return 0;
+    return false;
 }
 
 void check_len_or_die(char* value, char* field_name) {
@@ -367,6 +368,7 @@ int main(int argc, char* argv[]) {
     long int port;
     int i;
     int screen_res_width = -1, screen_res_height;
+    int handshake_attempts = 2;
 
     context.init_hook = success_init_hook;
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);

@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <syslog.h>
 
@@ -29,28 +30,28 @@
 
 #define PPM_FNAME_BUF_SIZE 128
 
-static int ppm_img_writer(struct context* ctx, int x, int y, int width, int height
+static bool ppm_img_writer(struct context* ctx, int x, int y, int width, int height
                       , char* data) {
     struct ppm_context* pctx = &ctx->w.pctx;
     FILE *f;
     int size = width * height * 3;
     if (0 == size) {
-        return 1;
+        return false;
     }
     snprintf(pctx->fname, PPM_FNAME_BUF_SIZE, pctx->path, pctx->num);
     slog(LOG_DEBUG, "save damage to %s", pctx->fname);
     f = fopen(pctx->fname, "wb");
     if (f == NULL) {
-        return 0;
+        return false;
     }
     fprintf(f, "P6 %d %d 255\n", width, height);
     fwrite(data+1, size, 1, f);
     fclose(f);
     pctx->num += 1;
-    return 1;
+    return true;
 }
 
-static int ppm_write_pointerr(struct context* ctx, int x, int y
+static bool ppm_write_pointerr(struct context* ctx, int x, int y
                               , int width, int height, char* pointer) {
     struct ppm_context* pctx = &ctx->w.pctx;
     FILE *f;
@@ -59,13 +60,13 @@ static int ppm_write_pointerr(struct context* ctx, int x, int y
 //    slog(LOG_DEBUG, "save pointer to %s", pctx->fname);
     f = fopen(pctx->fname, "wb");
     if (f == NULL) {
-        return 0;
+        return false;
     }
     fprintf(f, "P6 %d %d 255\n", width, height);
     fwrite(pointer, size, 1, f);
     fclose(f);
     pctx->num += 1;
-    return 1;
+    return true;
 }
 
 void init_ppm(struct context* ctx, char* path) {
