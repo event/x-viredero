@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <assert.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <unistd.h>
@@ -39,6 +40,7 @@
 #define USB_URI "http://play.google.com/"
 #define USB_SERIAL_NUM "130"
 #define USB_XFER_TIMEO_MSEC 1000
+#define USB_CHECK_TIMEO_MSEC 10
 #define USB_ACCESSORY_VID 0x18D1
 #define USB_ACCESSORY_PID_MASK 0xFFF0
 #define USB_ACCESSORY_PID 0x2D00
@@ -211,7 +213,41 @@ static bool usb_init_conn(struct context* ctx, char* buf, int size) {
         response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, buf
                                         , size, &t
                                         , USB_XFER_TIMEO_MSEC);
-        slog(LOG_DEBUG, "USB: init: sent %d/%d bytes", t, size);
+        slog(LOG_DEBUG, "USB: init: receive %d/%d bytes", t, size);
+        buf += t;
+        size -= t;
+    }
+    if (response != 0) {
+        slog(LOG_ERR, "USB: didn't get Init cmd: %s", libusb_strerror(response));
+        if (LIBUSB_ERROR_NO_DEVICE == response) {
+            ctx->w.uctx.hndl = NULL;
+        }
+        return false;
+    }
+    return true;
+}
+
+static bool usb_check_reinit(struct context* ctx, char* buf, int size) {
+    int received = 0;
+    int response;
+    int t = 0;
+    slog(LOG_DEBUG, "USB: check if remote side trying to reinit");
+    assert(ctx->w.uctx.hndl != NULL);
+    response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, buf
+                             , size, &t
+                             , USB_CHECK_TIMEO_MSEC);
+    if (LIBUSB_ERROR_TIMEOUT == response) {
+        return false;
+    }
+
+    slog(LOG_DEBUG, "USB: remote side reinit attempt detected");
+    buf += t;
+    size -= t;
+    while (size > 0 && (LIBUSB_ERROR_TIMEOUT == response || 0 == response)) {
+        response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, buf
+                                        , size, &t
+                                        , USB_XFER_TIMEO_MSEC);
+        slog(LOG_DEBUG, "USB: reinit: receive %d/%d bytes", t, size);
         buf += t;
         size -= t;
     }
@@ -247,6 +283,7 @@ void init_usb(struct context* ctx, int bus, int port) {
     ctx->write_image = usb_img_writer;
     ctx->write_pointer = usb_pntr_writer;
     ctx->init_conn = usb_init_conn;
+    ctx->check_reinit = usb_check_reinit;
     ctx->send_reply = usb_write;
     libusb_init(NULL);
     libusb_set_debug(NULL, LIBUSB_LOG_LEVEL_INFO);

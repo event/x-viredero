@@ -95,6 +95,7 @@ struct context {
 #endif
     } w;
     bool (*init_conn)(struct context*, char*, int);
+    bool (*check_reinit)(struct context*, char*, int);
     bool (*send_reply)(struct context*, char*, int);
     bool (*write_image)(struct context*, int, int, int, int, char*);
     bool (*write_pointer)(struct context*, int, int, int, int, char*);

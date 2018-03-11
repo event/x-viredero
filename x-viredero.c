@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <assert.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <unistd.h>
@@ -46,7 +47,7 @@
 #define CURSOR_MAX_SIZE 64
 #define CURSOR_BUFFER_SIZE (4 * CURSOR_MAX_SIZE * CURSOR_MAX_SIZE + POINTERCMD_HEAD_LEN)
 #define POINTER_CHECK_INTERVAL_MSEC 50
-#define FAILURES_EXIT_PUMP 3
+#define FAILURES_EXIT_PUMP 100
 
 static int max_log_level = 8;
 void slog(int prio, char* format, ...) {
@@ -243,30 +244,24 @@ static void send_error_reply(struct context* ctx, enum CommandResultCode error) 
     ctx->send_reply(ctx, buf, 2);
 }
 
-static bool handshake(struct context* ctx) {
-    char* buf = ctx->buffer;
-    char version;
+static bool init_cmd_reply(struct context* ctx, char* buf) {
     XWindowAttributes attrib;
-    
-    if (! ctx->init_conn(ctx, buf, INIT_CMD_LEN)) {
-        return false;
-    }
     if (buf[0] != 0) {
         send_error_reply(ctx, ErrorBadMessage);
         return false;
     }
 
-    if (version > MAX_VIREDERO_PROT_VERSION) {
+    if (buf[1] > MAX_VIREDERO_PROT_VERSION) {
         send_error_reply(ctx, ErrorVersion);
         return false;
     }
     
-    if ((buf[1] & SF_RGB) == 0) {
+    if ((buf[2] & SF_RGB) == 0) {
         send_error_reply(ctx, ErrorScreenFormatNotSupported);
         return false;
     }
 
-    if ((buf[2] & PF_RGBA) == 0) {
+    if ((buf[3] & PF_RGBA) == 0) {
         send_error_reply(ctx, ErrorPointerFormatNotSupported);
         return false;
     }
@@ -278,6 +273,15 @@ static bool handshake(struct context* ctx) {
     ((int*)(buf + 4))[0] = htonl(attrib.width);
     ((int*)(buf + 4))[1] = htonl(attrib.height);
     return ctx->send_reply(ctx, buf, 12);
+}
+
+static bool handshake(struct context* ctx) {
+    char* buf = ctx->buffer;
+
+    if (! ctx->init_conn(ctx, buf, INIT_CMD_LEN)) {
+        return false;
+    }
+    return init_cmd_reply(ctx, buf);
 }
 
 static void update_fail_cnt(bool res, int* fail) {
@@ -321,6 +325,10 @@ static void pump(struct context* ctx) {
                 }
             }
             millis = now();
+        }
+        if (ctx->check_reinit(ctx, ctx->buffer, INIT_CMD_LEN)) {
+            slog(LOG_WARNING, "Remote side initiated reinit. Replying...\n");
+            init_cmd_reply(ctx, ctx->buffer);
         }
     }
     ctx->fin = 0;
