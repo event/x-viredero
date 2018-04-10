@@ -36,6 +36,8 @@
 #include <X11/extensions/XShm.h>
 #include <X11/extensions/Xfixes.h>
 #include <X11/extensions/Xrandr.h>
+#include <cairo/cairo.h>
+#include <cairo/cairo-xlib.h>
 
 #include "x-viredero.h"
 
@@ -48,6 +50,8 @@
 #define CURSOR_BUFFER_SIZE (4 * CURSOR_MAX_SIZE * CURSOR_MAX_SIZE + POINTERCMD_HEAD_LEN)
 #define POINTER_CHECK_INTERVAL_MSEC 50
 #define FAILURES_EXIT_PUMP 100
+
+char* image_buffer;
 
 static int max_log_level = 8;
 void slog(int prio, char* format, ...) {
@@ -64,7 +68,7 @@ static void usage() {
     printf("USAGE: %s <opts>\n", PROG);
 }
 
-static long now() {
+unsigned long now() {
     struct timespec tp;
     clock_gettime(CLOCK_MONOTONIC, &tp);
     return tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
@@ -79,22 +83,6 @@ char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
     ((int*)(header + 1))[2] = htonl(x);
     ((int*)(header + 1))[3] = htonl(y);
     return header;
-}
-
-static void zpixmap2rgb(char* data, unsigned long len) {
-    //pixmap is in agbr format
-    uint32_t* src = (uint32_t*)data;
-    uint32_t* end = src + len;
-    while (src < end) {
-        char green = (char)((src[0] >> 16) & 0xFF);
-        char blue = (char)((src[0] >> 8) & 0xFF);
-        char red = (char)(src[0] & 0xFF);
-        data[0] = red;
-        data[1] = green;
-        data[2] = blue;
-        data += 3;
-        src += 1;
-    }
 }
 
 static void cursor2rgba(unsigned long* cur_data, char* rgba_data, unsigned long len) {
@@ -117,15 +105,11 @@ bool dummy_pointer_writer(struct context* ctx, int x, int y
 
 static bool output_damage(struct context* ctx, int x, int y, int width, int height) {
 //    slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
-    ctx->shmimage->width = width;
-    ctx->shmimage->height = height;
-    if (!XShmGetImage(ctx->display, ctx->root
-                      , ctx->shmimage, x, y, AllPlanes)) {
-        slog(LOG_ERR, "unabled to get the image\n");
-        return false;
-    }
-    zpixmap2rgb(ctx->shmimage->data, width * height);
-    return ctx->write_image(ctx, x, y, width, height, ctx->shmimage->data);
+    bool res;
+    char* buf = image_buffer + DATA_BUFFER_HEAD;
+    ctx->get_image(ctx, buf, x, y, width, height);
+    res = ctx->write_image(ctx, x, y, width, height, buf);
+    return res;
 }
 
 static bool output_pointer_image(struct context* ctx) {
@@ -167,36 +151,6 @@ static bool setup_display(const char * display_name, struct context* ctx) {
     XFixesSelectCursorInput(display, root,
                             XFixesDisplayCursorNotifyMask);
     XDamageCreate(display, root, XDamageReportRawRectangles);
-    XWindowAttributes attrib;
-    XGetWindowAttributes(display, root, &attrib);
-    if (0 == attrib.width || 0 == attrib.height)
-    {
-        slog(LOG_ERR, "bad root with size %dx%d\n"
-             , attrib.width, attrib.height);
-        return false;
-    }
-    int scr = XDefaultScreen(display);
-    ctx->shmimage = XShmCreateImage(
-        display, DefaultVisual(display, scr), DefaultDepth(display, scr)
-        , ZPixmap, NULL, &ctx->shminfo, attrib.width, attrib.height);
-
-    ctx->shminfo.shmid = shmget(
-        IPC_PRIVATE
-        , DATA_BUFFER_HEAD + ctx->shmimage->bytes_per_line * ctx->shmimage->height
-        , IPC_CREAT | 0777);
-    if (ctx->shminfo.shmid == -1) {
-        slog(LOG_ERR, "Cannot get shared memory!");
-        return false;
-    }
- 
-    ctx->shminfo.shmaddr = shmat(ctx->shminfo.shmid, 0, 0);
-    ctx->shminfo.readOnly = False;
-    ctx->shmimage->data = ctx->shminfo.shmaddr + DATA_BUFFER_HEAD;
-    if (!XShmAttach(display, &ctx->shminfo)) {
-        slog(LOG_ERR, "Failed to attach shared memory!");
-        return false;
-    }
-
     ctx->buffer = (char*)malloc(CURSOR_BUFFER_SIZE);
     ctx->cursor_x = 0;
     ctx->cursor_y = 0;
@@ -230,6 +184,81 @@ static void set_resolution(struct context* ctx, int width, int height) {
     XRRFreeScreenResources(res);
 }
 
+static void get_image_bmp(struct context* ctx, char* out, int x, int y, int width, int height) {
+    XImage* ximage = ctx->p.bmp.shmimage;
+    ximage->width = width;
+    ximage->height = height;
+    if (!XShmGetImage(ctx->display, ctx->root
+                      , ximage, x, y, AllPlanes)) {
+        slog(LOG_ERR, "unabled to get the image\n");
+        return;
+    }
+    for (int j = 0; j < height; j += 1) {
+        for (int i = 0; i < width; i += 1) {
+            unsigned long pixel = XGetPixel(ximage, i, j);
+            out[0] = pixel & 0xFF;
+            out[1] = (pixel >> 16) & 0xFF;
+            out[2] = (pixel >> 8) & 0xFF;
+            out += 3;
+        }
+    }
+}
+
+static bool init_image_pump_bmp(struct context* ctx, int width, int height) {
+    int scr = XDefaultScreen(ctx->display);
+    XShmSegmentInfo* shminfo = &ctx->p.bmp.shminfo;
+    XImage* shmimage = XShmCreateImage(
+        ctx->display, DefaultVisual(ctx->display, scr), DefaultDepth(ctx->display, scr)
+        , ZPixmap, NULL, shminfo, width, height);
+
+    shminfo->shmid = shmget(
+        IPC_PRIVATE
+        , DATA_BUFFER_HEAD + shmimage->bytes_per_line * shmimage->height
+        , IPC_CREAT | 0777);
+    if (shminfo->shmid == -1) {
+        slog(LOG_ERR, "Cannot get shared memory!");
+        return false;
+    }
+
+    shminfo->shmaddr = shmat(shminfo->shmid, 0, 0);
+    shminfo->readOnly = False;
+    shmimage->data = shminfo->shmaddr + DATA_BUFFER_HEAD;
+    if (!XShmAttach(ctx->display, shminfo)) {
+        slog(LOG_ERR, "Failed to attach shared memory!");
+        return false;
+    }
+    ctx->p.bmp.shmimage = shmimage;
+    image_buffer = malloc(width * height * 3);
+    ctx->get_image = get_image_bmp;
+    return true;
+}
+
+static cairo_status_t write_png(void* closure, const unsigned char* data, unsigned int length) {
+    char* out = *(char**)closure;
+    memcpy(out, data, length);
+    *(char**)closure = out + length;
+    return CAIRO_STATUS_SUCCESS;
+}
+
+static void get_image_png(struct context* ctx, char* out, int x, int y, int width, int height) {
+    cairo_surface_t* surface;
+    cairo_rectangle_int_t rect;
+    rect.x = x;
+    rect.y = y;
+    rect.width = width;
+    rect.height = height;
+    surface = cairo_surface_map_to_image(ctx->p.png.surface, &rect);
+    cairo_surface_write_to_png_stream(surface, write_png, &out);
+}
+
+static bool init_image_pump_png(struct context* ctx, int width, int height) {
+    int scr = XDefaultScreen(ctx->display);
+    ctx->p.png.surface = cairo_xlib_surface_create(
+        ctx->display, ctx->root, DefaultVisual(ctx->display, scr), width, height);
+    return true;
+}
+
+
 static void daemonize() {
     if (daemon(0, 0)) {
         slog(LOG_ERR, "Failed to daemonize: %m");
@@ -245,7 +274,6 @@ static void send_error_reply(struct context* ctx, enum CommandResultCode error) 
 }
 
 static bool init_cmd_reply(struct context* ctx, char* buf) {
-    XWindowAttributes attrib;
     if (buf[0] != 0) {
         send_error_reply(ctx, ErrorBadMessage);
         return false;
@@ -256,8 +284,20 @@ static bool init_cmd_reply(struct context* ctx, char* buf) {
         return false;
     }
     
-    if ((buf[2] & SF_RGB) == 0) {
+    XWindowAttributes attrib;
+    XGetWindowAttributes(ctx->display, ctx->root, &attrib);
+    bool init_res;
+    if ((buf[2] & SF_PNG) != 0) {
+        init_res = init_image_pump_png(ctx, attrib.width, attrib.height);
+    } else if ((buf[2] & SF_RGB) != 0) {
+        init_res = init_image_pump_bmp(ctx, attrib.width, attrib.height);
+    } else {
         send_error_reply(ctx, ErrorScreenFormatNotSupported);
+        return false;
+    }
+
+    if (! init_res) {
+        send_error_reply(ctx, ErrorInitFailed);
         return false;
     }
 
@@ -269,7 +309,6 @@ static bool init_cmd_reply(struct context* ctx, char* buf) {
     buf[1] = ResultSuccess;
     buf[2] = SF_RGB;
     buf[3] = PF_RGBA;
-    XGetWindowAttributes(ctx->display, ctx->root, &attrib);
     ((int*)(buf + 4))[0] = htonl(attrib.width);
     ((int*)(buf + 4))[1] = htonl(attrib.height);
     return ctx->send_reply(ctx, buf, 12);
@@ -293,13 +332,13 @@ static void update_fail_cnt(bool res, int* fail) {
 }
 
 static void pump(struct context* ctx) {
-    long oldmillis = 0;
+    unsigned long oldmillis = 0;
     int oldx = 0;
     int oldy = 0;
     int fail_cnt = 0;
     while (!ctx->fin && fail_cnt < FAILURES_EXIT_PUMP) {
         struct timespec tp;
-        long millis = now();
+        unsigned long millis = now();
         if (millis - oldmillis > POINTER_CHECK_INTERVAL_MSEC) {
             int junk, x, y;
             Window junkw;

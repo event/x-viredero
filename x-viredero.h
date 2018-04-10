@@ -23,6 +23,7 @@
 #include <stdbool.h>
 #include <X11/Xlibint.h>
 #include <X11/extensions/XShm.h>
+#include <cairo/cairo.h>
 #if WITH_USB
 #include <libusb-1.0/libusb.h>
 #endif
@@ -46,6 +47,7 @@ enum CommandResultCode {
     ErrorVersion,
     ErrorScreenFormatNotSupported,
     ErrorPointerFormatNotSupported,
+    ErrorInitFailed,
 };
 
 enum ScreenFormat { // bit masks
@@ -75,25 +77,37 @@ struct usb_context {
 };
 #endif
 
+struct bmp_image_pump_context {
+    XShmSegmentInfo shminfo;
+    XImage* shmimage;
+};
+
+struct png_image_pump_context {
+    cairo_surface_t* surface;
+};
+
 struct context {
     Display* display;
     Window root;
-    XShmSegmentInfo shminfo;
-    XImage* shmimage;
     int damage_evt_base;
     int cursor_evt_base;
     int fin;
     char* buffer;
     char* init_hook_fname;
+    char* image_out_buf;
     short cursor_x;
     short cursor_y;
-    union writer_cfg{
+    union writer_cfg {
         struct sock_context sctx;
         struct ppm_context pctx;
 #if WITH_USB
         struct usb_context uctx;
 #endif
     } w;
+    union image_pump {
+        struct bmp_image_pump_context bmp;
+        struct png_image_pump_context png;
+    } p;
     bool (*init_conn)(struct context*, char*, int);
     bool (*check_reinit)(struct context*, char*, int);
     bool (*send_reply)(struct context*, char*, int);
@@ -102,11 +116,13 @@ struct context {
     bool (*change_scene)(struct context*);
     bool (*recenter)(struct context*, int, int);
     bool (*init_hook)(struct context*, char*);
+    void (*get_image)(struct context*, char*, int, int, int, int);
 };
 
 
 void slog(int, char*, ...);
 char* fill_imagecmd_header(char*, int, int, int, int);
+unsigned long now();
 #if WITH_USB
 void init_usb(struct context*, int bus, int port);
 #endif
