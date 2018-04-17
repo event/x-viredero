@@ -53,6 +53,11 @@
 
 char* image_buffer;
 
+struct png_wr_ctx {
+    char* out;
+    int offset;
+};
+
 static int max_log_level = 8;
 void slog(int prio, char* format, ...) {
     if (prio > max_log_level) {
@@ -74,15 +79,16 @@ unsigned long now() {
     return tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
 }
 
-
-char* fill_imagecmd_header(char* data, int w, int h, int x, int y) {
-    char* header = data - IMAGECMD_HEAD_LEN;
-    header[0] = (char)Image;
-    ((int*)(header + 1))[0] = htonl(w);
-    ((int*)(header + 1))[1] = htonl(h);
-    ((int*)(header + 1))[2] = htonl(x);
-    ((int*)(header + 1))[3] = htonl(y);
-    return header;
+char* fill_imagecmd_header(char* data, int data_len, int w, int h, int x, int y) {
+    char* cmd = data - IMAGECMD_HEAD_LEN;
+    int* header = (int*)(cmd + 1);
+    *cmd = (char)Image;
+    header[0] = htonl(w);
+    header[1] = htonl(h);
+    header[2] = htonl(x);
+    header[3] = htonl(y);
+    header[4] = htonl(data_len);
+    return cmd;
 }
 
 static void cursor2rgba(unsigned long* cur_data, char* rgba_data, unsigned long len) {
@@ -99,7 +105,7 @@ static void cursor2rgba(unsigned long* cur_data, char* rgba_data, unsigned long 
 }
 
 bool dummy_pointer_writer(struct context* ctx, int x, int y
-                         , int width, int height, char* pointer) {
+                          , int width, int height, char* pointer) {
     return true;
 }
 
@@ -107,8 +113,9 @@ static bool output_damage(struct context* ctx, int x, int y, int width, int heig
 //    slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
     bool res;
     char* buf = image_buffer + DATA_BUFFER_HEAD;
-    ctx->get_image(ctx, buf, x, y, width, height);
-    res = ctx->write_image(ctx, x, y, width, height, buf);
+    //TODO: a place for fps count
+    int len = ctx->get_image(ctx, buf, x, y, width, height);
+    res = len > 0 && ctx->write_image(ctx, x, y, width, height, buf, len);
     return res;
 }
 
@@ -184,14 +191,14 @@ static void set_resolution(struct context* ctx, int width, int height) {
     XRRFreeScreenResources(res);
 }
 
-static void get_image_bmp(struct context* ctx, char* out, int x, int y, int width, int height) {
-    XImage* ximage = ctx->p.bmp.shmimage;
+static int get_image_bmp(struct context* ctx, char* out, int x, int y, int width, int height) {
+    XImage* ximage = ctx->bmp.shmimage;
     ximage->width = width;
     ximage->height = height;
     if (!XShmGetImage(ctx->display, ctx->root
                       , ximage, x, y, AllPlanes)) {
         slog(LOG_ERR, "unabled to get the image\n");
-        return;
+        return 0;
     }
     for (int j = 0; j < height; j += 1) {
         for (int i = 0; i < width; i += 1) {
@@ -202,11 +209,12 @@ static void get_image_bmp(struct context* ctx, char* out, int x, int y, int widt
             out += 3;
         }
     }
+    return width * height * 3;
 }
 
 static bool init_image_pump_bmp(struct context* ctx, int width, int height) {
     int scr = XDefaultScreen(ctx->display);
-    XShmSegmentInfo* shminfo = &ctx->p.bmp.shminfo;
+    XShmSegmentInfo* shminfo = &ctx->bmp.shminfo;
     XImage* shmimage = XShmCreateImage(
         ctx->display, DefaultVisual(ctx->display, scr), DefaultDepth(ctx->display, scr)
         , ZPixmap, NULL, shminfo, width, height);
@@ -227,37 +235,45 @@ static bool init_image_pump_bmp(struct context* ctx, int width, int height) {
         slog(LOG_ERR, "Failed to attach shared memory!");
         return false;
     }
-    ctx->p.bmp.shmimage = shmimage;
-    image_buffer = malloc(width * height * 3);
+    ctx->bmp.shmimage = shmimage;
+    image_buffer = malloc(IMAGECMD_HEAD_LEN + width * height * 3);
     ctx->get_image = get_image_bmp;
     return true;
 }
 
 static cairo_status_t write_png(void* closure, const unsigned char* data, unsigned int length) {
-    char* out = *(char**)closure;
-    memcpy(out, data, length);
-    *(char**)closure = out + length;
+    struct png_wr_ctx* wr_ctx = (struct png_wr_ctx*)closure;
+    memcpy(wr_ctx->out + wr_ctx->offset, data, length);
+    wr_ctx->offset += length;
     return CAIRO_STATUS_SUCCESS;
 }
 
-static void get_image_png(struct context* ctx, char* out, int x, int y, int width, int height) {
-    cairo_surface_t* surface;
+static int get_image_png(struct context* ctx, char* out, int x, int y, int width, int height) {
+    cairo_surface_t* xsurface;
+    cairo_surface_t* isurface;
     cairo_rectangle_int_t rect;
+    struct png_wr_ctx wr_ctx;
+    wr_ctx.out = out;
+    wr_ctx.offset = 0;
     rect.x = x;
     rect.y = y;
     rect.width = width;
     rect.height = height;
-    surface = cairo_surface_map_to_image(ctx->p.png.surface, &rect);
-    cairo_surface_write_to_png_stream(surface, write_png, &out);
+    xsurface = cairo_xlib_surface_create(
+        ctx->display, ctx->root, XDefaultVisual(ctx->display, XDefaultScreen(ctx->display))
+        , x + width, y + height);
+    isurface = cairo_surface_map_to_image(xsurface, &rect);
+    cairo_surface_write_to_png_stream(isurface, write_png, &wr_ctx);
+    cairo_surface_unmap_image(xsurface, isurface);
+    cairo_surface_destroy(xsurface);
+    return wr_ctx.offset;
 }
 
 static bool init_image_pump_png(struct context* ctx, int width, int height) {
-    int scr = XDefaultScreen(ctx->display);
-    ctx->p.png.surface = cairo_xlib_surface_create(
-        ctx->display, ctx->root, DefaultVisual(ctx->display, scr), width, height);
+    image_buffer = malloc(IMAGECMD_HEAD_LEN + width * height * 3);
+    ctx->get_image = get_image_png;
     return true;
 }
-
 
 static void daemonize() {
     if (daemon(0, 0)) {
@@ -289,8 +305,10 @@ static bool init_cmd_reply(struct context* ctx, char* buf) {
     bool init_res;
     if ((buf[2] & SF_PNG) != 0) {
         init_res = init_image_pump_png(ctx, attrib.width, attrib.height);
+        buf[2] = SF_PNG;
     } else if ((buf[2] & SF_RGB) != 0) {
         init_res = init_image_pump_bmp(ctx, attrib.width, attrib.height);
+        buf[2] = SF_RGB;
     } else {
         send_error_reply(ctx, ErrorScreenFormatNotSupported);
         return false;
@@ -307,7 +325,7 @@ static bool init_cmd_reply(struct context* ctx, char* buf) {
     }
     buf[0] = InitReply;
     buf[1] = ResultSuccess;
-    buf[2] = SF_RGB;
+    buf[2] = SF_PNG;
     buf[3] = PF_RGBA;
     ((int*)(buf + 4))[0] = htonl(attrib.width);
     ((int*)(buf + 4))[1] = htonl(attrib.height);
@@ -393,10 +411,10 @@ static bool exec_init_hook_fname(struct context* ctx, char* str) {
     return false;
 }
 
-void check_len_or_die(char* value, char* field_name) {
+static int check_len_or_die(char* value, char* field_name) {
     int len = strlen(value);
     if (len <= DISP_NAME_MAXLEN) {
-        return;
+        return len;
     }
     fprintf(stderr, "%s %s is longer then %d."
             " We can't handle it. Good bye.\n"
@@ -426,7 +444,7 @@ int main(int argc, char* argv[]) {
             debug = 1;
             break;
         case 'D':
-            check_len_or_die(optarg, "Display name");
+            len = check_len_or_die(optarg, "Display name");
             disp_name = malloc(len + 1);
             strncpy(disp_name, optarg, len);
             break;
@@ -440,7 +458,7 @@ int main(int argc, char* argv[]) {
             init_socket(&context, (uint16_t)port);
             break;
         case 'p':
-            check_len_or_die(optarg, "File name");
+            len = check_len_or_die(optarg, "File name");
             path = malloc(len + 1);
             strncpy(path, optarg, len);
             init_ppm(&context, path);
@@ -505,4 +523,4 @@ int main(int argc, char* argv[]) {
     output_pointer_image(&context);
     pump(&context);
 }
-  
+

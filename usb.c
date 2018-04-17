@@ -155,7 +155,7 @@ static bool try_setup_accessory(struct context* ctx, libusb_device* dev) {
 
 static bool usb_write(struct context* ctx, char* data, int size) {
     int sent = 0;
-    while (size > 0) { 
+    while (size > 0) {
         int response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_OUT_ENDPOINT, data
                                             , size, &sent, USB_XFER_TIMEO_MSEC);
         if (response != 0) {
@@ -173,9 +173,9 @@ static bool usb_write(struct context* ctx, char* data, int size) {
 }
 
 static bool usb_img_writer(struct context* ctx, int x, int y, int width, int height
-                      , char* data) {
-    char* header = fill_imagecmd_header(data, width, height, x, y);
-    int size = (width * height * 3) + IMAGECMD_HEAD_LEN;
+                           , char* data, int data_len) {
+    char* header = fill_imagecmd_header(data, data_len, width, height, x, y);
+    int size = data_len + IMAGECMD_HEAD_LEN;
     return usb_write(ctx, header, size);
 }
 

@@ -28,7 +28,7 @@
 #include <libusb-1.0/libusb.h>
 #endif
 
-#define IMAGECMD_HEAD_LEN 17
+#define IMAGECMD_HEAD_LEN 21
 #define POINTERCMD_HEAD_LEN 18
 #define DEFAULT_PORT 1242
 
@@ -82,10 +82,6 @@ struct bmp_image_pump_context {
     XImage* shmimage;
 };
 
-struct png_image_pump_context {
-    cairo_surface_t* surface;
-};
-
 struct context {
     Display* display;
     Window root;
@@ -104,24 +100,21 @@ struct context {
         struct usb_context uctx;
 #endif
     } w;
-    union image_pump {
-        struct bmp_image_pump_context bmp;
-        struct png_image_pump_context png;
-    } p;
+    struct bmp_image_pump_context bmp;
     bool (*init_conn)(struct context*, char*, int);
     bool (*check_reinit)(struct context*, char*, int);
     bool (*send_reply)(struct context*, char*, int);
-    bool (*write_image)(struct context*, int, int, int, int, char*);
+    bool (*write_image)(struct context*, int, int, int, int, char*, int);
     bool (*write_pointer)(struct context*, int, int, int, int, char*);
     bool (*change_scene)(struct context*);
     bool (*recenter)(struct context*, int, int);
     bool (*init_hook)(struct context*, char*);
-    void (*get_image)(struct context*, char*, int, int, int, int);
+    int (*get_image)(struct context*, char*, int, int, int, int);
 };
 
 
 void slog(int, char*, ...);
-char* fill_imagecmd_header(char*, int, int, int, int);
+char* fill_imagecmd_header(char*, int, int, int, int, int);
 unsigned long now();
 #if WITH_USB
 void init_usb(struct context*, int bus, int port);

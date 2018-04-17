@@ -31,11 +31,10 @@
 #define PPM_FNAME_BUF_SIZE 128
 
 static bool ppm_img_writer(struct context* ctx, int x, int y, int width, int height
-                      , char* data) {
+                           , char* data, int data_len) {
     struct ppm_context* pctx = &ctx->w.pctx;
     FILE *f;
-    int size = width * height * 3;
-    if (0 == size) {
+    if (0 == data_len) {
         return false;
     }
     snprintf(pctx->fname, PPM_FNAME_BUF_SIZE, pctx->path, pctx->num);
@@ -44,29 +43,32 @@ static bool ppm_img_writer(struct context* ctx, int x, int y, int width, int hei
     if (f == NULL) {
         return false;
     }
-    fprintf(f, "P6 %d %d 255\n", width, height);
-    fwrite(data+1, size, 1, f);
+//    fprintf(f, "P6 %d %d 255\n", width, height); //bmp header
+    fwrite(data, data_len, 1, f);
     fclose(f);
     pctx->num += 1;
     return true;
 }
 
-static bool ppm_write_pointerr(struct context* ctx, int x, int y
-                              , int width, int height, char* pointer) {
-    struct ppm_context* pctx = &ctx->w.pctx;
-    FILE *f;
-    int size = width * height * 3;
-    snprintf(pctx->fname, PPM_FNAME_BUF_SIZE, pctx->path, pctx->num);
-//    slog(LOG_DEBUG, "save pointer to %s", pctx->fname);
-    f = fopen(pctx->fname, "wb");
-    if (f == NULL) {
-        return false;
-    }
-    fprintf(f, "P6 %d %d 255\n", width, height);
-    fwrite(pointer, size, 1, f);
-    fclose(f);
-    pctx->num += 1;
+static bool ppm_pntr_writer(struct context* ctx, int x, int y, int width, int height
+                           , char* data) {
+    return ppm_img_writer(ctx, x, y, width, height, data, width * height * 3);
+}
+
+static bool ppm_init_conn(struct context* ctx, char* buf, int size) {
+    buf[0] = 0;
+    buf[1] = 1;
+    buf[2] = 2;
+    buf[3] = 1;
     return true;
+}
+
+static bool return_true() {
+    return true;
+}
+
+static bool return_false() {
+    return false;
 }
 
 void init_ppm(struct context* ctx, char* path) {
@@ -75,7 +77,10 @@ void init_ppm(struct context* ctx, char* path) {
     pctx->path = path;
     pctx->fname = malloc(PPM_FNAME_BUF_SIZE);
     ctx->write_image = ppm_img_writer;
-    ctx->write_pointer = ppm_img_writer;
+    ctx->write_pointer = ppm_pntr_writer;
+    ctx->init_conn = ppm_init_conn;
+    ctx->check_reinit = return_false;
+    ctx->send_reply = return_true;
 }
 
 

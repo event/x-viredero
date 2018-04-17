@@ -30,7 +30,7 @@
 #include "x-viredero.h"
 
 static bool sock_img_writer(struct context* ctx, int x, int y, int width, int height
-                       , char* data) {
+                            , char* data, int data_len) {
     int size = width * height * 3;
     int fd = ctx->w.sctx.sock;
     if (0 == fd) {
@@ -41,7 +41,7 @@ static bool sock_img_writer(struct context* ctx, int x, int y, int width, int he
         }
         ctx->w.sctx.sock = fd;
     }
-    char* header = fill_imagecmd_header(data, width, height, x, y);
+    char* header = fill_imagecmd_header(data, data_len, width, height, x, y);
     size += 17;
     while (size > 0) {
         int sent = send(fd, header, size, 0);
