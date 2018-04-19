@@ -63,31 +63,6 @@ static bool xfer_or_die(libusb_device_handle* hndl, int wIdx, char* str) {
     return true;
 }
 
-static void fill_init_hook_msg(unsigned char* str, libusb_device_handle* hndl) {
-    struct libusb_device_descriptor desc;
-    libusb_device* dev = libusb_get_device(hndl);
-    int res = libusb_get_device_descriptor(dev, &desc);
-    if (res != 0) {
-        slog(LOG_DEBUG, "USB: get descriptor failed: %s", libusb_strerror(res));
-        str[0] = '\0';
-        return;
-    }
-    int len = sprintf(str, "Start viredero on usb %04hx:%04hx: ", desc.idVendor, desc.idProduct);
-    int strlen = libusb_get_string_descriptor_ascii(hndl, desc.iProduct
-                                                    , str + len, INIT_HOOK_MSG_LEN - len);
-    if (strlen < 0) {
-        slog(LOG_DEBUG, "USB: get product name failed: %s", libusb_strerror(strlen));
-        return;
-    }
-    strcat(str, " by ");
-    len += strlen + 4;
-    strlen = libusb_get_string_descriptor_ascii(hndl, desc.iManufacturer
-                                                , str + len, INIT_HOOK_MSG_LEN - len);
-    if (strlen < 0) {
-        slog(LOG_DEBUG, "USB: get manufacturer name failed: %s", libusb_strerror(strlen));
-    }
-}
-
 static bool init_accessory(struct context* ctx, libusb_device_handle* hndl) {
     unsigned char buf[2];
     int res = libusb_control_transfer(
@@ -104,17 +79,6 @@ static bool init_accessory(struct context* ctx, libusb_device_handle* hndl) {
     }
     if (0 == res) {
         slog(LOG_NOTICE, "USB: not an android host");
-        return false;
-    }
-    unsigned char* str = malloc(INIT_HOOK_MSG_LEN);
-    fill_init_hook_msg(str, hndl);
-    if (str[0] != '\0') {
-        res = ctx->init_hook(ctx, str);
-    } else {
-        res = 0;
-    }
-    free(str);
-    if (! res) {
         return false;
     }
     slog(LOG_DEBUG, "USB Device version code: %d", buf[1] << 8 | buf[0]);

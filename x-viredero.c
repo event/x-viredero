@@ -391,26 +391,6 @@ static void pump(struct context* ctx) {
     ctx->fin = 0;
 }
 
-static bool success_init_hook(struct context* ctx, char* str) {
-    return true;
-}
-
-static bool exec_init_hook_fname(struct context* ctx, char* str) {
-    FILE* p = popen(ctx->init_hook_fname, "w");
-    if (NULL == p) {
-        return false;
-    }
-    fwrite(str, 1, strlen(str) + 1, p);
-    int res = pclose(p);
-    if (0 == res) {
-        return true;
-    }
-    if (res < 0) {
-        slog(LOG_WARNING, "error executing init hook '%s': %m\n", ctx->init_hook_fname);
-    }
-    return false;
-}
-
 static int check_len_or_die(char* value, char* field_name) {
     int len = strlen(value);
     if (len <= DISP_NAME_MAXLEN) {
@@ -435,9 +415,8 @@ int main(int argc, char* argv[]) {
     int screen_res_width = -1, screen_res_height;
     int handshake_attempts = 2;
 
-    context.init_hook = success_init_hook;
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
-    while ((c = getopt (argc, argv, "hdu:D:l:p:i:r:")) != -1) {
+    while ((c = getopt (argc, argv, "hdu:D:l:p:r:")) != -1) {
         switch (c)
         {
         case 'd':
@@ -472,12 +451,6 @@ int main(int argc, char* argv[]) {
             } else {
                 fprintf(stderr, "Resolution have to be of the format <width>x<height>. Ignoring\n");
             }
-            break;
-        case 'i':
-            len = strlen(optarg) + 1;
-            context.init_hook_fname = malloc(len);
-            strncpy(context.init_hook_fname, optarg, len);
-            context.init_hook = exec_init_hook_fname;
             break;
 #if WITH_USB
         case 'u':

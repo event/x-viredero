@@ -88,7 +88,6 @@ struct context {
     int damage_evt_base;
     int cursor_evt_base;
     int fin;
-    char* init_hook_fname;
     short cursor_x;
     short cursor_y;
     union writer_cfg {
@@ -106,7 +105,6 @@ struct context {
     bool (*write_pointer)(struct context*, int, int, int, int, char*);
     bool (*change_scene)(struct context*);
     bool (*recenter)(struct context*, int, int);
-    bool (*init_hook)(struct context*, char*);
     int (*get_image)(struct context*, char*, int, int, int, int);
 };
 
