@@ -88,9 +88,7 @@ struct context {
     int damage_evt_base;
     int cursor_evt_base;
     int fin;
-    char* buffer;
     char* init_hook_fname;
-    char* image_out_buf;
     short cursor_x;
     short cursor_y;
     union writer_cfg {

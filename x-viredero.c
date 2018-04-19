@@ -45,13 +45,14 @@
 #define DISP_NAME_MAXLEN 64
 #define DATA_BUFFER_HEAD 32
 #define INIT_CMD_LEN 4
+#define MAX_INIT_BUF_SIZE 12 // maximum size required for init_reply cmd
 #define MAX_VIREDERO_PROT_VERSION 1
 #define CURSOR_MAX_SIZE 64
 #define CURSOR_BUFFER_SIZE (4 * CURSOR_MAX_SIZE * CURSOR_MAX_SIZE + POINTERCMD_HEAD_LEN)
 #define POINTER_CHECK_INTERVAL_MSEC 50
 #define FAILURES_EXIT_PUMP 100
 
-char* image_buffer;
+static char* image_buffer;
 
 struct png_wr_ctx {
     char* out;
@@ -121,14 +122,14 @@ static bool output_damage(struct context* ctx, int x, int y, int width, int heig
 
 static bool output_pointer_image(struct context* ctx) {
     XFixesCursorImage* cursor = XFixesGetCursorImage(ctx->display);
-    char* data = ctx->buffer + POINTERCMD_HEAD_LEN; // leave some head space for cmd header
+    char* data = image_buffer + POINTERCMD_HEAD_LEN; // leave some head space for cmd header
     cursor2rgba(cursor->pixels, data, cursor->width * cursor->height * 4);
     return ctx->write_pointer(ctx, cursor->x, cursor->y
                        , cursor->width, cursor->height, data);
 }
 
 static bool output_pointer_coords(struct context* ctx, int x, int y) {
-    return ctx->write_pointer(ctx, x, y, 0, 0, ctx->buffer);
+    return ctx->write_pointer(ctx, x, y, 0, 0, image_buffer);
 }
 
 static bool setup_display(const char * display_name, struct context* ctx) {
@@ -158,7 +159,6 @@ static bool setup_display(const char * display_name, struct context* ctx) {
     XFixesSelectCursorInput(display, root,
                             XFixesDisplayCursorNotifyMask);
     XDamageCreate(display, root, XDamageReportRawRectangles);
-    ctx->buffer = (char*)malloc(CURSOR_BUFFER_SIZE);
     ctx->cursor_x = 0;
     ctx->cursor_y = 0;
     
@@ -333,7 +333,7 @@ static bool init_cmd_reply(struct context* ctx, char* buf) {
 }
 
 static bool handshake(struct context* ctx) {
-    char* buf = ctx->buffer;
+    char buf[MAX_INIT_BUF_SIZE];
 
     if (! ctx->init_conn(ctx, buf, INIT_CMD_LEN)) {
         return false;
@@ -383,9 +383,9 @@ static void pump(struct context* ctx) {
             }
             millis = now();
         }
-        if (ctx->check_reinit(ctx, ctx->buffer, INIT_CMD_LEN)) {
+        if (ctx->check_reinit(ctx, image_buffer, INIT_CMD_LEN)) {
             slog(LOG_WARNING, "Remote side initiated reinit. Replying...\n");
-            init_cmd_reply(ctx, ctx->buffer);
+            init_cmd_reply(ctx, image_buffer);
         }
     }
     ctx->fin = 0;
