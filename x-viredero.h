@@ -24,6 +24,7 @@
 #include <X11/Xlibint.h>
 #include <X11/extensions/XShm.h>
 #include <cairo/cairo.h>
+#include <webp/encode.h>
 #if WITH_USB
 #include <libusb-1.0/libusb.h>
 #endif
@@ -82,6 +83,12 @@ struct bmp_image_pump_context {
     XImage* shmimage;
 };
 
+struct webp_image_pump_context {
+    struct bmp_image_pump_context bmp;
+    WebPConfig config;
+    WebPPicture picture;
+};
+
 struct context {
     Display* display;
     Window root;
@@ -97,7 +104,10 @@ struct context {
         struct usb_context uctx;
 #endif
     } w;
-    struct bmp_image_pump_context bmp;
+    union pump_cfg {
+        struct bmp_image_pump_context bmp;
+        struct webp_image_pump_context webp;
+    } p;
     bool (*init_conn)(struct context*, char*, int);
     bool (*check_reinit)(struct context*, char*, int);
     bool (*send_reply)(struct context*, char*, int);

@@ -1,5 +1,5 @@
 env = Environment(CCFLAGS = '-Werror -I/usr/include'
-                  , LIBS = ['X11', 'Xdamage', 'Xext', 'Xfixes', 'Xrandr', 'cairo'])
+                  , LIBS = ['X11', 'Xdamage', 'Xext', 'Xfixes', 'Xrandr', 'cairo', 'webp'])
 conf = Configure(env)
 files = ['x-viredero.c', 'ppm.c', 'net.c']
 if conf.CheckLib('usb-1.0') :

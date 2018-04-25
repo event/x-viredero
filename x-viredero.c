@@ -39,6 +39,8 @@
 #include <cairo/cairo.h>
 #include <cairo/cairo-xlib.h>
 
+#include <webp/encode.h>
+
 #include "x-viredero.h"
 
 #define PROG "x-viredero"
@@ -192,7 +194,7 @@ static void set_resolution(struct context* ctx, int width, int height) {
 }
 
 static int get_image_bmp(struct context* ctx, char* out, int x, int y, int width, int height) {
-    XImage* ximage = ctx->bmp.shmimage;
+    XImage* ximage = ctx->p.bmp.shmimage;
     ximage->width = width;
     ximage->height = height;
     if (!XShmGetImage(ctx->display, ctx->root
@@ -214,7 +216,7 @@ static int get_image_bmp(struct context* ctx, char* out, int x, int y, int width
 
 static bool init_image_pump_bmp(struct context* ctx, int width, int height) {
     int scr = XDefaultScreen(ctx->display);
-    XShmSegmentInfo* shminfo = &ctx->bmp.shminfo;
+    XShmSegmentInfo* shminfo = &ctx->p.bmp.shminfo;
     XImage* shmimage = XShmCreateImage(
         ctx->display, DefaultVisual(ctx->display, scr), DefaultDepth(ctx->display, scr)
         , ZPixmap, NULL, shminfo, width, height);
@@ -235,7 +237,7 @@ static bool init_image_pump_bmp(struct context* ctx, int width, int height) {
         slog(LOG_ERR, "Failed to attach shared memory!");
         return false;
     }
-    ctx->bmp.shmimage = shmimage;
+    ctx->p.bmp.shmimage = shmimage;
     image_buffer = malloc(IMAGECMD_HEAD_LEN + width * height * 3);
     ctx->get_image = get_image_bmp;
     return true;
@@ -275,6 +277,50 @@ static bool init_image_pump_png(struct context* ctx, int width, int height) {
     return true;
 }
 
+static int get_image_webp(struct context* ctx, char* out, int x, int y, int width, int height) {
+    XImage* ximage = ctx->p.bmp.shmimage;
+    ximage->width = width;
+    ximage->height = height;
+    if (!XShmGetImage(ctx->display, ctx->root
+                      , ximage, x, y, AllPlanes)) {
+        slog(LOG_ERR, "unabled to get the image\n");
+        return 0;
+    }
+    WebPPicture* pic = &ctx->p.webp.picture;
+    pic->argb = (uint32_t*)ximage->data;
+    pic->argb_stride = width;
+    WebPMemoryWriter w;
+    w.mem = out;
+    w.max_size = width * height * 3;
+    w.size = 0;
+    pic->custom_ptr = &w;
+    WebPEncode(&ctx->p.webp.config, pic);
+    return w.size;
+}
+
+static bool init_image_pump_webp(struct context* ctx, int width, int height) {
+    init_image_pump_bmp(ctx, width, height);
+    ctx->get_image = get_image_webp;
+    WebPConfig config;
+    if (!WebPConfigPreset(&ctx->p.webp.config, WEBP_PRESET_PHOTO, 100)
+        || !WebPConfigLosslessPreset(&ctx->p.webp.config, 3))
+    {
+        return false;
+    }
+    WebPPicture* pic = &ctx->p.webp.picture;
+    if (!WebPPictureInit(pic)) {
+        return 0;
+    }
+    pic->width = width;
+    pic->height = height;
+    if (!WebPPictureAlloc(pic)) {
+        return 0;
+    }
+    pic->writer = WebPMemoryWrite;
+
+    return true;
+}
+
 static void daemonize() {
     if (daemon(0, 0)) {
         slog(LOG_ERR, "Failed to daemonize: %m");
@@ -305,6 +351,7 @@ static bool init_cmd_reply(struct context* ctx, char* buf) {
     bool init_res;
     if ((buf[2] & SF_PNG) != 0) {
         init_res = init_image_pump_png(ctx, attrib.width, attrib.height);
+//        init_res = init_image_pump_webp(ctx, attrib.width, attrib.height);
         buf[2] = SF_PNG;
     } else if ((buf[2] & SF_RGB) != 0) {
         init_res = init_image_pump_bmp(ctx, attrib.width, attrib.height);
