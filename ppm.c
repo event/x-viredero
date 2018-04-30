@@ -29,9 +29,10 @@
 #include "x-viredero.h"
 
 #define PPM_FNAME_BUF_SIZE 128
+#define PPM_IMAGE_FORMAT SF_PNG
 
-static bool ppm_img_writer(struct context* ctx, int x, int y, int width, int height
-                           , char* data, int data_len) {
+static bool ppm_img_writer_with_header(struct context* ctx, char* data
+                                       , int data_len, char* header) {
     struct ppm_context* pctx = &ctx->w.pctx;
     FILE *f;
     if (0 == data_len) {
@@ -40,26 +41,38 @@ static bool ppm_img_writer(struct context* ctx, int x, int y, int width, int hei
     snprintf(pctx->fname, PPM_FNAME_BUF_SIZE, pctx->path, pctx->num);
     slog(LOG_DEBUG, "save damage to %s", pctx->fname);
     f = fopen(pctx->fname, "wb");
-    if (f == NULL) {
+    if (NULL == f) {
         return false;
     }
-//    fprintf(f, "P6 %d %d 255\n", width, height); //bmp header
+    if (header) {
+        fwrite(header, strlen(header), 1, f);
+    }
     fwrite(data, data_len, 1, f);
     fclose(f);
     pctx->num += 1;
     return true;
 }
 
+static bool ppm_img_writer(struct context* ctx, int x, int y, int width, int height
+                           , char* data, int data_len) {
+#if PPM_IMAGE_FORMAT == SF_RGB
+    char header[32];
+    sprintf(header, "P6 %d %d 255\n", width, height); //bmp header
+    ppm_img_writer_with_header(ctx, data, data_len, header);
+#endif
+    ppm_img_writer_with_header(ctx, data, data_len, NULL);
+
+}
 static bool ppm_pntr_writer(struct context* ctx, int x, int y, int width, int height
                            , char* data) {
-    return ppm_img_writer(ctx, x, y, width, height, data, width * height * 3);
+    return ppm_img_writer_with_header(ctx, data, width * height * 4, NULL);
 }
 
 static bool ppm_init_conn(struct context* ctx, char* buf, int size) {
     buf[0] = 0;
-    buf[1] = 1;
-    buf[2] = 2;
-    buf[3] = 1;
+    buf[1] = 1; //VIREDERO protocol version
+    buf[2] = PPM_IMAGE_FORMAT;
+    buf[3] = PF_RGBA;
     return true;
 }
 

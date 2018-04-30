@@ -53,6 +53,7 @@
 #define CURSOR_BUFFER_SIZE (4 * CURSOR_MAX_SIZE * CURSOR_MAX_SIZE + POINTERCMD_HEAD_LEN)
 #define POINTER_CHECK_INTERVAL_MSEC 50
 #define FAILURES_EXIT_PUMP 100
+#define USE_PNG 1
 
 static char* image_buffer;
 
@@ -350,9 +351,12 @@ static bool init_cmd_reply(struct context* ctx, char* buf) {
     XGetWindowAttributes(ctx->display, ctx->root, &attrib);
     bool init_res;
     if ((buf[2] & SF_PNG) != 0) {
+#ifdef USE_PNG
         init_res = init_image_pump_png(ctx, attrib.width, attrib.height);
-//        init_res = init_image_pump_webp(ctx, attrib.width, attrib.height);
-        buf[2] = SF_PNG;
+#else
+        init_res = init_image_pump_webp(ctx, attrib.width, attrib.height);
+#endif
+        buf[2] = SF_PNG; // android automatically detect png/webp/jpeg formats on decoding
     } else if ((buf[2] & SF_RGB) != 0) {
         init_res = init_image_pump_bmp(ctx, attrib.width, attrib.height);
         buf[2] = SF_RGB;
