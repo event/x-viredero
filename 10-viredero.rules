@@ -8660,8 +8660,6 @@ ATTR{idVendor}=="f003", MODE="0666", ENV{android_matched}="yes"
 #Atten Electronics / Siglent Technologies
 ATTR{idVendor}=="f4ec", MODE="0666", ENV{android_matched}="yes"
 
-#ENV{android_matched}=="yes", ENV{DISPLAY}=":0", RUN+="/bin/su event -c '/usr/bin/zenity --info'"
-
-#ENV{android_matched}=="yes", ENV{DISPLAY}=":0", RUN+="/bin/su event -c '/usr/bin/zenity --question --text=\"Start X-Viredero?\" && /home/event/sw/x-viredero/x-viredero -u $attr{busnum}.$attr{devnum} $(cat /etc/x-viredero.params)'"
+#ENV{android_matched}=="yes", RUN+="/usr/bin/start_x-viredero.sh"
 
 LABEL="xviredero_end"
