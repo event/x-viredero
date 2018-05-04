@@ -170,30 +170,6 @@ static bool setup_display(const char * display_name, struct context* ctx) {
     return true;
 }
 
-static void set_resolution(struct context* ctx, int width, int height) {
-    int t;
-    int min, maj;
-    if (!XRRQueryExtension (ctx->display, &t, &t)
-        || !XRRQueryVersion (ctx->display, &maj, &min))
-    {
-        slog(LOG_WARNING, "RandR extension missing\n");
-        return;
-    }
-    if (maj < 1 || (maj == 1 && min < 3)) {
-        slog(LOG_WARNING, "RandR extension version %d.%d is less then 1.3\n", maj, min);
-        return;
-    }
-    int width_mm = ((double)width) * DisplayWidthMM(ctx->display, 0) / DisplayWidth(ctx->display, 0);
-    int height_mm = ((double)height) * DisplayHeightMM(ctx->display, 0) / DisplayHeight(ctx->display, 0);
-    XRRPanning pan = {0};
-    pan.width = width;
-    pan.height = height;
-    XRRScreenResources* res = XRRGetScreenResourcesCurrent(ctx->display, ctx->root);
-    XRRSetScreenSize(ctx->display, ctx->root, width, height, width_mm, height_mm);
-    XRRSetPanning(ctx->display, res, res->crtcs[0], &pan);
-    XRRFreeScreenResources(res);
-}
-
 static int get_image_bmp(struct context* ctx, char* out, int x, int y, int width, int height) {
     XImage* ximage = ctx->p.bmp.shmimage;
     ximage->width = width;
@@ -455,6 +431,7 @@ static int check_len_or_die(char* value, char* field_name) {
 
 static struct context context;
 
+
 int main(int argc, char* argv[]) {
     char* disp_name = ":0";
     char* path;
@@ -463,11 +440,10 @@ int main(int argc, char* argv[]) {
     int len;
     long int port;
     int i;
-    int screen_res_width = -1, screen_res_height;
     int handshake_attempts = 2;
 
     openlog(PROG, LOG_PERROR | LOG_CONS | LOG_PID, LOG_DAEMON);
-    while ((c = getopt (argc, argv, "hdu:D:l:p:r:")) != -1) {
+    while ((c = getopt (argc, argv, "hdu:D:l:p:")) != -1) {
         switch (c)
         {
         case 'd':
@@ -493,20 +469,10 @@ int main(int argc, char* argv[]) {
             strncpy(path, optarg, len);
             init_ppm(&context, path);
             break;
-        case 'r':
-            check_len_or_die(optarg, "Resolution");
-            char* delim = strchr(optarg, 'x');
-            if (delim != NULL) {
-                screen_res_width = strtol(optarg, NULL, 10);
-                screen_res_height = strtol(delim + 1, NULL, 10);
-            } else {
-                fprintf(stderr, "Resolution have to be of the format <width>x<height>. Ignoring\n");
-            }
-            break;
 #if WITH_USB
         case 'u':
             check_len_or_die(optarg, "USB device");
-            delim = strchr(optarg, '.');
+            char* delim = strchr(optarg, '.');
             int port, bus;
             if (delim != NULL) {
                 bus = strtol(optarg, NULL, 10);
@@ -530,9 +496,6 @@ int main(int argc, char* argv[]) {
         daemonize();
     }
     setup_display(disp_name, &context);
-    if (screen_res_width > 0) {
-        set_resolution(&context, screen_res_width, screen_res_height);
-    }
     slog(LOG_NOTICE, "%s up and running", PROG);
 
     while (context.init_conn && (handshake_attempts > 0) && !handshake(&context)) {
