@@ -452,7 +452,7 @@ int main(int argc, char* argv[]) {
         case 'D':
             len = check_len_or_die(optarg, "Display name");
             disp_name = malloc(len + 1);
-            strncpy(disp_name, optarg, len);
+            strncpy(disp_name, optarg, len + 1);
             break;
         case 'l':
             port = strtol(optarg, NULL, 10);
@@ -466,7 +466,7 @@ int main(int argc, char* argv[]) {
         case 'p':
             len = check_len_or_die(optarg, "File name");
             path = malloc(len + 1);
-            strncpy(path, optarg, len);
+            strncpy(path, optarg, len + 1);
             init_ppm(&context, path);
             break;
 #if WITH_USB
@@ -495,7 +495,9 @@ int main(int argc, char* argv[]) {
     if (!debug) {
         daemonize();
     }
-    setup_display(disp_name, &context);
+    if (!setup_display(disp_name, &context)) {
+        exit(1);
+    }
     slog(LOG_NOTICE, "%s up and running", PROG);
 
     while (context.init_conn && (handshake_attempts > 0) && !handshake(&context)) {
