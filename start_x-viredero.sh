@@ -31,19 +31,22 @@ LOCAL_CFG="$TARGET_HOME/.viredero"
 export DISPLAY="${DISPLAY:-:0}"
 [ -z "$DONT_ASK" -o "$DONT_ASK" = "0" ] && {
     if [ -x /usr/bin/zenity ] ; then
-        /usr/bin/zenity --question --title="$DIALOG_TITLE" --text="$DIALOG_TEXT"
+        cmd="/usr/bin/zenity --question --title=\"$DIALOG_TITLE\" --text=\"$DIALOG_TEXT\""
     elif [ -x /usr/bin/kdialog ] ; then
-        /usr/bin/kdialog --title "$DIALOG_TITLE" -yesno "$DIALOG_TEXT"
+        cmd="/usr/bin/kdialog --title \"$DIALOG_TITLE\" -yesno \"$DIALOG_TEXT\""
     elif [ -x /usr/bin/Xdialog ] ; then
-        /usr/bin/Xdialog --title "$DIALOG_TITLE" --clear --yesno "$DIALOG_TEXT" 10 80
+        cmd="/usr/bin/Xdialog --title \"$DIALOG_TITLE\" --clear --yesno \"$DIALOG_TEXT\" 10 80"
+    fi
+    if [ -n "$cmd" ]; then
+        /bin/su $TARGET_UNAME -c "$cmd" || {
+            log "User doesn't want to start x-viredero :("
+            exit 0
+        }
     else
         log "No suitable dialog program found. Will just proceed..."
     fi
-    [ "$?" != "0" ] && {
-        log "User doesn't want to start x-viredero :("
-        exit 0
-    }
     [ -z "$DONT_ASK" ] && echo "DONT_ASK=1" >>$LOCAL_CFG
+
 }
 
 [ -n "$PANNING_RESOLUTION" ] && {
