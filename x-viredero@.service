@@ -1,0 +1,2 @@
+[Service]
+ExecStart=/usr/bin/start_x-viredero.sh %I
