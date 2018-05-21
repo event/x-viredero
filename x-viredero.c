@@ -62,9 +62,9 @@ struct png_wr_ctx {
     int offset;
 };
 
-static int max_log_level = 8;
+static int log_level = LOG_NOTICE;
 void slog(int prio, char* format, ...) {
-    if (prio > max_log_level) {
+    if (prio > log_level) {
         return;
     }
     va_list ap;
@@ -492,7 +492,9 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    if (!debug) {
+    if (debug) {
+        log_level = LOG_DEBUG;
+    } else {
         daemonize();
     }
     if (!setup_display(disp_name, &context)) {
