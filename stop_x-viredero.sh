@@ -4,18 +4,19 @@ pid="$(pgrep -f "/usr/bin/x-viredero -u $1")"
 logger -t "xvrd" "Found x-viredero w/ pid $pid"
 [ -z "$pid" ] && exit 0
 
-uid="$(cat /proc/$pid/loginuid)"
+uid="$(stat -c %u /proc/$pid)"
 kill $pid || exit 0
 
 home="$(getent passwd $uid | cut -d: -f6)"
-restore_resolution="$(cat $home/.xvrd-resolution)"
-[ -z "$restore_resolution" ] && exit 0
+[ -f "$home/.xvrd-resolution" ] || exit 0
 
-GLOBAL_CFG="/etc/viredero"
-[ -f "$GLOBAL_CFG" ] && . $GLOBAL_CFG
-LOCAL_CFG="$home/.viredero"
-[ -f "$LOCAL_CFG" ] && . $LOCAL_CFG
+for v in OUTPUT RESOLUTION DISPLAY; do
+    read $v
+done < $home/.xvrd-resolution
+logger -t "xvrd" "Set resolution back to $RESOLUTION on output $OUTPUT for display $DISPLAY"
 
-[ -n "$XRANDR_OUTPUT" ] && out="--output $XRANDR_OUTPUT"
-/usr/bin/xrandr $out --panning $restore_resolution
+username="$(getent passwd $uid | cut -d: -f1)"
+export DISPLAY
+/bin/su $username -c "/usr/bin/xrandr --output $OUTPUT --panning $RESOLUTION"
+logger -t "xvrd" "Set resolution back: $?"
 rm -f $home/.xvrd-resolution

@@ -45,15 +45,29 @@ export DISPLAY="${DISPLAY:-:0}"
     else
         log "No suitable dialog program found. Will just proceed..."
     fi
-    [ -z "$DONT_ASK" ] && echo "DONT_ASK=1" >>$LOCAL_CFG
+    [ -z "$DONT_ASK" ] && {
+        echo "DONT_ASK=1" >>$LOCAL_CFG
+        chmod 0666 $LOCAL_CFG
+    }
 
 }
 
 [ -n "$PANNING_RESOLUTION" ] && {
-    [ -n "$XRANDR_OUTPUT" ] && out="--output $XRANDR_OUTPUT"
-    /usr/bin/xrandr --listactivemonitors | grep -G -m1 "^ 0: +$XRANDR_OUTPUT" \
-        | sed "s/^ [^ ]\+ [^ ]\+ \([0-9]\+\)\/[0-9]\+x\([0-9]\+\).*$/\1x\2/" >$TARGET_HOME/.xvrd-resolution
-    /usr/bin/xrandr $out --panning $PANNING_RESOLUTION \
+    if [ -z "$XRANDR_OUTPUT" ] ; then
+        mon_line="$(/bin/su $TARGET_UNAME -c "/usr/bin/xrandr --listactivemonitors | grep -G -m1 \"^ 0:\"")"
+        XRANDR_OUTPUT="${mon_line#*+}"
+        XRANDR_OUTPUT="${XRANDR_OUTPUT%% *}"
+    else
+        mon_line="$(/bin/su $TARGET_UNAME -c "/usr/bin/xrandr --listactivemonitors \
+| grep -G -m1 \"^ [0-9]\+: +$XRANDR_OUTPUT\"")"
+    fi
+    mon_line="${mon_line#*$XRANDR_OUTPUT }"
+    xres="${mon_line%%/*}"
+    mon_line="${mon_line#*x}"
+    yres="${mon_line%%/*}"
+    echo -e "${XRANDR_OUTPUT}\n${xres}x${yres}\n${DISPLAY}" > $TARGET_HOME/.xvrd-resolution
+    chmod 0666 $TARGET_HOME/.xvrd-resolution
+    /bin/su $TARGET_UNAME -c "/usr/bin/xrandr --output $XRANDR_OUTPUT --panning $PANNING_RESOLUTION" \
         || log "Failed to set requested resolution $PANNING_RESOLUTION"
 }
 
