@@ -7,18 +7,22 @@ log() {
     logger -t "x-viredero" "$1"
 }
 
-TARGET_UID="$(ls -1 /var/run/user | head -1)"
 GLOBAL_CFG="/etc/viredero"
 [ -f "$GLOBAL_CFG" ] && . $GLOBAL_CFG
 [ "$DISABLED" = "1" ] && {
     log "x-viredero is disabled globally"
     exit 0
 }
-TARGET_UNAME="${TARGET_UNAME:-$(getent passwd $TARGET_UID | cut -d: -f1)}"
+[ -z "$TARGET_UNAME" ] && {
+    uid="$(ls -1 /var/run/user | head -1)"
+    TARGET_UNAME="$(getent passwd $uid | cut -d: -f1)"
+}
+
 [ -z "$TARGET_UNAME" ] && {
     log "Could not determine user to run x-viredero for. Please define it in $GLOBAL_CFG"
     exit 1
 }
+
 TARGET_HOME="$(getent passwd $TARGET_UNAME | cut -d: -f6)"
 LOCAL_CFG="$TARGET_HOME/.viredero"
 [ -f "$LOCAL_CFG" ] && . $LOCAL_CFG
