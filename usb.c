@@ -169,7 +169,7 @@ static bool usb_init_conn(struct context* ctx, char* buf, int size) {
     int received = 0;
     int response = LIBUSB_ERROR_TIMEOUT;
     slog(LOG_DEBUG, "USB: init connection");
-    while (NULL == ctx->w.uctx.hndl) {
+    if(NULL == ctx->w.uctx.hndl) {
         return false;
     }
     while (size > 0 && (LIBUSB_ERROR_TIMEOUT == response || 0 == response)) {
@@ -195,8 +195,10 @@ static bool usb_check_reinit(struct context* ctx, char* buf, int size) {
     int received = 0;
     int response;
     int t = 0;
+    if (NULL == ctx->w.uctx.hndl) {
+        return false;
+    }
     slog(LOG_DEBUG, "USB: check if remote side trying to reinit");
-    assert(ctx->w.uctx.hndl != NULL);
     response = libusb_bulk_transfer(ctx->w.uctx.hndl, BLK_IN_ENDPOINT, buf
                              , size, &t
                              , USB_CHECK_TIMEO_MSEC);
