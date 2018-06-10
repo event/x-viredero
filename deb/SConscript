@@ -20,8 +20,10 @@ DEBFILES = [
     # If you have a lot of files, you may wish to generate this 
     # list in some other way.
     ('usr/bin/x-viredero',             '#x-viredero'),
-#    ('usr/share/x-viredero/init_hook.sh',  '#init_hook.sh'),
-#    ('udev-path/99-android-udev-rule',  '#udev-rule'),
+    ('lib/udev/rules.d/10-viredero.rules',  '#10-viredero.rules'),
+    ('usr/bin/start_x-viredero.sh',  '#start_x-viredero.sh'),
+    ('usr/bin/stop_x-viredero.sh',  '#stop_x-viredero.sh'),
+    ('usr/lib/systemd/system/x-viredero@.service',  '#x-viredero@.service'),
 ]
 
 # This is the debian package we're going to create
