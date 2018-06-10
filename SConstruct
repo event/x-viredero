@@ -1,4 +1,4 @@
-env = Environment(CCFLAGS = '-Werror -I/usr/include'
+env = Environment(CCFLAGS = '-Werror'
                   , LIBS = ['X11', 'Xdamage', 'Xext', 'Xfixes', 'Xrandr', 'cairo', 'webp'])
 conf = Configure(env)
 files = ['x-viredero.c', 'ppm.c', 'net.c']
