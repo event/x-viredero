@@ -52,6 +52,7 @@
 #define CURSOR_MAX_SIZE 64
 #define CURSOR_BUFFER_SIZE (4 * CURSOR_MAX_SIZE * CURSOR_MAX_SIZE + POINTERCMD_HEAD_LEN)
 #define POINTER_CHECK_INTERVAL_MSEC 50
+#define FPS_LOG_INTERVAL_MSEC 30000
 #define FAILURES_EXIT_PUMP 100
 #define USE_PNG 1
 
@@ -117,7 +118,6 @@ static bool output_damage(struct context* ctx, int x, int y, int width, int heig
 //    slog(LOG_DEBUG, "outputing damage: %d %d %d %d\n", x, y, width, height);
     bool res;
     char* buf = image_buffer + DATA_BUFFER_HEAD;
-    //TODO: a place for fps count
     int len = ctx->get_image(ctx, buf, x, y, width, height);
     res = len > 0 && ctx->write_image(ctx, x, y, width, height, buf, len);
     return res;
@@ -381,6 +381,8 @@ static void pump(struct context* ctx) {
     int oldx = 0;
     int oldy = 0;
     int fail_cnt = 0;
+    unsigned long fps_startmillis = now();
+    int frame_cnt = 0;
     while (!ctx->fin && fail_cnt < FAILURES_EXIT_PUMP) {
         struct timespec tp;
         unsigned long millis = now();
@@ -406,6 +408,12 @@ static void pump(struct context* ctx) {
                 if (de->drawable == ctx->root) {
                     update_fail_cnt(output_damage(ctx, de->area.x, de->area.y
                                                   , de->area.width, de->area.height), &fail_cnt);
+                    frame_cnt += 1;
+                    if (millis - fps_startmillis > FPS_LOG_INTERVAL_MSEC) {
+                        slog(LOG_INFO, "%d fps\n", frame_cnt / ((millis - fps_startmillis) / 1000));
+                        fps_startmillis = millis;
+                        frame_cnt = 0;
+                    }
                 }
             }
             millis = now();
